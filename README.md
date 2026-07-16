@@ -54,6 +54,11 @@ scribe.bat config                         # show toggles and whether the drive i
 
 First transcription downloads the Whisper model (~500 MB for `small.en`).
 
+On a **Snapdragon / ARM64** laptop, install the **x64** build of Python from
+python.org (the "Windows installer (64-bit)"), *not* the ARM64 build — the
+capture and transcription wheels are x64-only and Windows 11 runs them under
+emulation. See [Windows on ARM](#windows-on-arm-snapdragon-laptops) below.
+
 ## Portable build (run from a USB stick)
 
 ```powershell
@@ -72,16 +77,21 @@ all.
 
 ## Windows on ARM (Snapdragon laptops)
 
-Run the **x64 build under emulation** — don't try a native ARM64 install.
-Two load-bearing dependencies, `PyAudioWPatch` (WASAPI capture) and
-`ctranslate2` (faster-whisper's engine), publish no `win_arm64` wheels, so a
-native ARM64 Python cannot record or transcribe. The portable build already
-downloads x64 embeddable Python, and Windows 11 on ARM runs it transparently
-through the Prism emulator — including on the machine doing the build:
+Use **x64 Python under emulation** — don't try a native ARM64 install. Two
+load-bearing dependencies, `PyAudioWPatch` (WASAPI capture) and `ctranslate2`
+(faster-whisper's engine), publish no `win_arm64` wheels, so a native ARM64
+Python cannot record or transcribe. Windows 11 on ARM runs x64 Python
+transparently through the Prism emulator, so both install paths work:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Scribe
-```
+- **Installed clone:** grab the *x64* Python from python.org (the "Windows
+  installer (64-bit)", not the ARM64 one), then follow
+  [Quick start](#quick-start-from-a-clone) unchanged.
+- **Portable stick:** the build script already fetches x64 embeddable Python,
+  so it works as-is — even when run on the ARM machine itself:
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Scribe
+  ```
 
 Notes for ARM:
 
