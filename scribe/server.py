@@ -129,7 +129,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
 
     @app.post("/api/start")
     def start():
-        title = (request.json or {}).get("title", "Meeting")
+        title = (request.get_json(silent=True) or {}).get("title", "Meeting")
         ok, msg = rec.start(title)
         return jsonify({"ok": ok, "message": msg}), (200 if ok else 409)
 

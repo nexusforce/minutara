@@ -6,8 +6,11 @@ was launched from. On a USB stick that means recordings, transcripts, the
 Whisper model, and the ingest manifest all travel with the stick and nothing
 is left behind on the host machine.
 
-Settings resolve in this order: config.json next to the app > environment
-variable > default. Cloud is off unless you turn it on.
+Settings resolve in this order: environment variable (SCRIBE_<KEY>) >
+config.json next to the app > default. The env override matters because
+config.json is written in full on first run — a one-off run like
+SCRIBE_WHISPER_DEVICE=cuda would be impossible if the file always won.
+Cloud is off unless you turn it on.
 """
 
 from __future__ import annotations
@@ -99,7 +102,7 @@ def load() -> Config:
         default = getattr(cfg, key)
         if key in file_data:
             setattr(cfg, key, _coerce(file_data[key], default))
-        env = os.environ.get(f"MS_{key.upper()}")
+        env = os.environ.get(f"SCRIBE_{key.upper()}")
         if env is not None:
             setattr(cfg, key, _coerce(env, default))
 

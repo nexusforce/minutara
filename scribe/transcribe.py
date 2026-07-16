@@ -23,6 +23,20 @@ from faster_whisper import WhisperModel
 # on accents/crosstalk and still real-time-ish on a modern CPU.
 DEFAULT_MODEL = "small.en"
 
+# faster-whisper assumes raw numpy input is already at this rate; anything
+# else must be resampled first or the audio plays back at the wrong speed.
+WHISPER_RATE = 16000
+
+
+def _resample(mono: np.ndarray, src_rate: int) -> np.ndarray:
+    """Linear resample to WHISPER_RATE. Good enough for STT."""
+    if src_rate == WHISPER_RATE or len(mono) == 0:
+        return mono.astype(np.float32)
+    n_out = int(len(mono) * WHISPER_RATE / src_rate)
+    x_old = np.linspace(0, 1, len(mono), endpoint=False)
+    x_new = np.linspace(0, 1, n_out, endpoint=False)
+    return np.interp(x_new, x_old, mono).astype(np.float32)
+
 
 @dataclass
 class Utterance:
@@ -37,7 +51,7 @@ class Utterance:
 
 
 def _transcribe_channel(
-    model: WhisperModel, audio: np.ndarray, speaker: str
+    model: WhisperModel, audio: np.ndarray | str, speaker: str
 ) -> list[Utterance]:
     segments, _info = model.transcribe(
         audio,
@@ -60,18 +74,27 @@ def transcribe(
     model_size: str = DEFAULT_MODEL,
     device: str = "cpu",
 ) -> list[Utterance]:
-    audio, rate = sf.read(str(wav_path), dtype="float32", always_2d=True)
+    try:
+        audio, rate = sf.read(str(wav_path), dtype="float32", always_2d=True)
+    except Exception:
+        # libsndfile can't decode this container (e.g. the .m4a files Pocket
+        # serves). Hand the path to faster-whisper, which decodes anything
+        # via PyAV — at the cost of the channel-based speaker split.
+        audio, rate = None, 0
 
     model = WhisperModel(model_size, device=device, compute_type="int8")
 
-    if audio.shape[1] == 2:
-        left, right = audio[:, 0], audio[:, 1]
+    if audio is None:
+        utterances = _transcribe_channel(model, str(wav_path), "Speaker")
+    elif audio.shape[1] == 2:
+        left = _resample(audio[:, 0], rate)
+        right = _resample(audio[:, 1], rate)
         utterances = _transcribe_channel(model, left, me)
         utterances += _transcribe_channel(model, right, them)
     else:
         # Mono file (e.g. pulled down from the Pocket device) — no channel
         # separation available, so one unlabeled pass.
-        utterances = _transcribe_channel(model, audio[:, 0], "Speaker")
+        utterances = _transcribe_channel(model, _resample(audio.mean(axis=1), rate), "Speaker")
 
     utterances.sort(key=lambda u: u.start)
     return utterances
