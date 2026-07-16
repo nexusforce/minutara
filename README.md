@@ -125,7 +125,7 @@ override it.
 
 Settings covers: which microphone to record from (the speakers side always
 follows the system default output), where recordings are saved (default:
-`downloads` in the app folder), Whisper model, speaker labels, the Pocket
+`recordings` in the app folder), Whisper model, speaker labels, the Pocket
 cloud toggles, and the API key — no JSON editing. The panel also has
 **View log** (the same `scribe.log` the engine writes — start there when
 something looks stuck) and **Quit Scribe**, which stops the background

@@ -64,7 +64,7 @@ class Config:
     # --- Paths (all under APP_ROOT so the stick stays self-contained) ---
     # recordings_dir is user-configurable (Settings in the GUI, or
     # "recordings_dir" in config.json — relative paths resolve under APP_ROOT).
-    recordings_dir: Path = field(default_factory=lambda: APP_ROOT / "downloads")
+    recordings_dir: Path = field(default_factory=lambda: APP_ROOT / "recordings")
     transcripts_dir: Path = field(default_factory=lambda: APP_ROOT / "transcripts")
     model_dir: Path = field(default_factory=lambda: APP_ROOT / "models")
     manifest_path: Path = field(default_factory=lambda: APP_ROOT / "ingested.json")

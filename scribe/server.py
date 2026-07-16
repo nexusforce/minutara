@@ -639,7 +639,7 @@ PAGE = r"""<!doctype html>
       <div class="field">
         <label for="s-dir">Recordings folder</label>
         <input type="text" id="s-dir" autocomplete="off">
-        <div class="hint">Relative to the app folder, or an absolute path. Default: downloads</div>
+        <div class="hint">Relative to the app folder, or an absolute path. Default: recordings</div>
       </div>
 
       <div class="field two">
@@ -853,7 +853,7 @@ $("s-save").onclick = async () => {
     me_label: $("s-me").value.trim() || "Me",
     them_label: $("s-them").value.trim() || "Them",
     mic_device: $("s-mic").value,
-    recordings_dir: $("s-dir").value.trim() || "downloads",
+    recordings_dir: $("s-dir").value.trim() || "recordings",
     use_pocket_api: $("s-api").checked,
     push_to_pocket: $("s-push").checked,
     prefer_pocket_transcripts: $("s-prefer").checked,
