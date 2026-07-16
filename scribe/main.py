@@ -19,7 +19,10 @@ import threading
 from datetime import date, datetime, timedelta, timezone
 
 from . import config as config_mod
+from .log import get
 from .pipeline import process, stamped_name
+
+log = get("scribe")
 
 
 def cmd_record(args, cfg) -> None:
@@ -30,7 +33,7 @@ def cmd_record(args, cfg) -> None:
 
     stop = threading.Event()
     print(f"Recording '{args.title}'. Ctrl+C to stop.\n")
-    result = record(wav, stop)
+    result = record(wav, stop, mic_name=cfg.mic_device)
     print(f"\nStopped after {result.duration_s/60:.1f} min -> {wav.name}")
 
     if args.no_transcribe:
@@ -180,7 +183,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     cfg = config_mod.load()
-    args.func(args, cfg)
+    log.info("command: %s", args.cmd)
+    try:
+        args.func(args, cfg)
+    except Exception:
+        log.exception("command %r failed", args.cmd)
+        raise
 
 
 if __name__ == "__main__":

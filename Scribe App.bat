@@ -1,6 +1,19 @@
 @echo off
-rem Double-click to run Scribe like a desktop app: starts the engine and
-rem opens the GUI in its own window. Closing this console stops Scribe.
+rem Double-click to run Scribe like a desktop app. The engine runs windowless
+rem (pythonw) and writes scribe.log next to this file; quit from the app's
+rem settings panel. For a visible console instead, run: scribe.bat serve --open
+setlocal
 cd /d "%~dp0"
-call scribe.bat serve --open
-if errorlevel 1 pause
+if exist "%~dp0.venv\Scripts\pythonw.exe" (
+  start "" "%~dp0.venv\Scripts\pythonw.exe" -m scribe.main serve --open
+) else if exist "%~dp0python\pythonw.exe" (
+  rem Portable build layout
+  set "HF_HOME=%~dp0models"
+  set "XDG_CACHE_HOME=%~dp0models"
+  set "PYTHONPATH=%~dp0lib;%~dp0"
+  start "" "%~dp0python\pythonw.exe" -m scribe.main serve --open
+) else (
+  rem No windowless interpreter found — fall back to a console
+  call scribe.bat serve --open
+  if errorlevel 1 pause
+)

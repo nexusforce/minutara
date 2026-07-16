@@ -19,6 +19,10 @@ import numpy as np
 import soundfile as sf
 from faster_whisper import WhisperModel
 
+from .log import get
+
+log = get("scribe.transcribe")
+
 # "base.en" is fast and fine for meetings. "small.en" is noticeably better
 # on accents/crosstalk and still real-time-ish on a modern CPU.
 DEFAULT_MODEL = "small.en"
@@ -82,7 +86,12 @@ def transcribe(
         # via PyAV — at the cost of the channel-based speaker split.
         audio, rate = None, 0
 
+    # First ever run downloads the model (~500 MB for small.en) — by far the
+    # longest "Transcribing" you'll ever see. The download shows up here.
+    log.info("loading Whisper %s on %s (first run downloads the model)",
+             model_size, device)
     model = WhisperModel(model_size, device=device, compute_type="int8")
+    log.info("model ready; transcribing %s", wav_path.name)
 
     if audio is None:
         utterances = _transcribe_channel(model, str(wav_path), "Speaker")

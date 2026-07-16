@@ -6,6 +6,7 @@ recordings/
 transcripts/
 models/
 ingested.json
+scribe.log*
 
 # Portable build output
 dist/

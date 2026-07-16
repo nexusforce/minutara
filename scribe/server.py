@@ -2,10 +2,10 @@
 server.py — Scribe's GUI: a local web app served over your own LAN.
 
 One page, two audiences. Opened on the Windows box (Scribe App.bat launches
-it in an Edge app window) it's the desktop app: record, read transcripts,
-change settings. Opened on a phone on the same Wi-Fi it's the remote.
-Nothing routes through the internet — the browser talks to this process
-directly.
+it in an Edge app window) it's the desktop app: record, browse recordings and
+transcripts, change settings, read the log. Opened on a phone on the same
+Wi-Fi it's the remote. Nothing routes through the internet — the browser
+talks to this process directly.
 
 Every request needs the token from config.json. That matters: this endpoint
 can start a recording, so anyone on the same network who finds the port
@@ -20,11 +20,16 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from . import config as config_mod
 from .config import Config
+from .log import LOG_PATH, get
 from .pipeline import process, stamped_name
+
+log = get("scribe.server")
+
+AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus"}
 
 
 class Recorder:
@@ -52,6 +57,7 @@ class Recorder:
             self.started_at = datetime.now(timezone.utc).timestamp()
             self.thread = threading.Thread(target=self._run, daemon=True)
             self.thread.start()
+            log.info("recording started: %r", self.title)
             return True, "Recording."
 
     def stop(self) -> tuple[bool, str]:
@@ -60,6 +66,7 @@ class Recorder:
                 return False, "Not recording."
             self.stop_event.set()
             self.state = "transcribing"
+            log.info("recording stopped; transcribing")
             return True, "Stopped. Transcribing."
 
     def _run(self) -> None:
@@ -68,7 +75,7 @@ class Recorder:
         try:
             name = stamped_name(self.title)
             wav = self.cfg.recordings_dir / f"{name}.wav"
-            result = record(wav, self.stop_event)
+            result = record(wav, self.stop_event, mic_name=self.cfg.mic_device)
 
             txt = process(
                 wav, self.cfg,
@@ -80,6 +87,7 @@ class Recorder:
             self.state = "idle"
             self.last_message = f"Saved {txt.name}"
         except Exception as e:
+            log.exception("recording session failed")
             self.state = "error"
             self.last_message = str(e)
 
@@ -112,11 +120,17 @@ def local_ip() -> str:
 
 # Settings the GUI may change. server_port and server_token are deliberately
 # not here: the port needs a restart, and the token guards this very API.
+# recordings_dir is handled separately (it's a path, not a scalar).
 EDITABLE_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "whisper_model", "whisper_device",
-    "me_label", "them_label", "delete_from_device",
+    "me_label", "them_label", "mic_device", "delete_from_device",
 )
+
+
+def _shutdown() -> None:
+    """Exit shortly after the response flushes. Blunt, but right for this app."""
+    threading.Timer(0.4, os._exit, args=(0,)).start()
 
 
 def create_app(cfg: Config) -> tuple[Flask, Recorder]:
@@ -158,6 +172,8 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             "whisper_device": cfg.whisper_device,
             "me_label": cfg.me_label,
             "them_label": cfg.them_label,
+            "mic_device": cfg.mic_device,
+            "recordings_dir": str(cfg.recordings_dir),
             "use_pocket_api": cfg.use_pocket_api,
             "push_to_pocket": cfg.push_to_pocket,
             "prefer_pocket_transcripts": cfg.prefer_pocket_transcripts,
@@ -179,8 +195,49 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             if key == "pocket_api_key" and not str(data[key]).strip():
                 continue
             setattr(cfg, key, config_mod._coerce(data[key], getattr(defaults, key)))
+        if str(data.get("recordings_dir", "")).strip():
+            cfg.recordings_dir = config_mod.resolve_dir(data["recordings_dir"])
+            cfg.recordings_dir.mkdir(parents=True, exist_ok=True)
         config_mod.save(cfg)
+        log.info("settings saved (recordings_dir=%s, mic=%r, model=%s)",
+                 cfg.recordings_dir, cfg.mic_device, cfg.whisper_model)
         return jsonify({"ok": True})
+
+    @app.get("/api/devices")
+    def devices():
+        try:
+            from .capture import list_input_devices
+            info = list_input_devices()
+        except Exception as e:
+            info = {"mics": [], "default": "", "loopback": "", "error": str(e)}
+        info["selected"] = cfg.mic_device
+        return jsonify(info)
+
+    @app.get("/api/recordings")
+    def recordings():
+        cfg.recordings_dir.mkdir(parents=True, exist_ok=True)
+        files = sorted(
+            (f for f in cfg.recordings_dir.iterdir()
+             if f.is_file() and f.suffix.lower() in AUDIO_SUFFIXES),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )[:50]
+        return jsonify([
+            {
+                "name": f.name,
+                "size": f.stat().st_size,
+                "when": datetime.fromtimestamp(f.stat().st_mtime).strftime("%b %d, %H:%M"),
+            }
+            for f in files
+        ])
+
+    @app.get("/api/recordings/<path:name>")
+    def recording(name: str):
+        safe = Path(name).name
+        if not (cfg.recordings_dir / safe).exists():
+            return jsonify({"error": "No recording by that name."}), 404
+        # conditional=True gives Range support, which <audio> needs to seek.
+        return send_from_directory(cfg.recordings_dir, safe, conditional=True)
 
     @app.get("/api/transcripts")
     def transcripts():
@@ -206,6 +263,19 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             return jsonify({"error": "No transcript by that name."}), 404
         return Response(f.read_text(encoding="utf-8"), mimetype="text/plain")
 
+    @app.get("/api/log")
+    def log_tail():
+        if not LOG_PATH.exists():
+            return Response("(no log yet)", mimetype="text/plain")
+        lines = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+        return Response("\n".join(lines[-300:]), mimetype="text/plain")
+
+    @app.post("/api/quit")
+    def quit_():
+        log.info("quit requested from the GUI")
+        _shutdown()
+        return jsonify({"ok": True, "message": "Scribe is shutting down."})
+
     @app.post("/api/usb")
     def usb():
         from .usb_ingest import find_pocket_drive, ingest
@@ -219,6 +289,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
 
         result = ingest(record_dir, cfg.recordings_dir, cfg.manifest_path,
                         cfg.delete_from_device)
+        log.info("usb ingest: %d new, %d already seen", len(result.copied), result.skipped)
         if not result.copied:
             return jsonify({"ok": True, "message": "Nothing new on the device."})
 
@@ -226,8 +297,8 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             for f in result.copied:
                 try:
                     process(f, cfg, title=f.stem)
-                except Exception as e:
-                    print(f"Could not transcribe {f.name}: {e}")
+                except Exception:
+                    log.exception("could not transcribe %s", f.name)
 
         threading.Thread(target=work, daemon=True).start()
         n = len(result.copied)
@@ -262,10 +333,31 @@ def _open_ui(url: str) -> None:
     webbrowser.open(url)
 
 
+def _port_in_use(port: int) -> bool:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.4)
+    try:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+    finally:
+        s.close()
+
+
 def serve(cfg: Config, open_browser: bool = False) -> None:
+    local_url = f"http://127.0.0.1:{cfg.server_port}/?token={cfg.server_token}"
+
+    # Double-clicking the launcher twice shouldn't crash on a busy port —
+    # if Scribe is already running, just bring up its window.
+    if _port_in_use(cfg.server_port):
+        log.info("already running on port %s; opening the window", cfg.server_port)
+        print("Scribe is already running — opening its window.")
+        if open_browser:
+            _open_ui(local_url)
+        return
+
     app, _ = create_app(cfg)
     lan_url = f"http://{local_ip()}:{cfg.server_port}/?token={cfg.server_token}"
 
+    log.info("serving on port %s (log: %s)", cfg.server_port, LOG_PATH)
     print("\n  Scribe is up. On your phone (same Wi-Fi), open:\n")
     print(f"    {lan_url}\n")
     try:
@@ -273,13 +365,12 @@ def serve(cfg: Config, open_browser: bool = False) -> None:
         qr = qrcode.QRCode(border=1)
         qr.add_data(lan_url)
         qr.print_ascii(invert=True)
-    except ImportError:
-        print("  (pip install qrcode for a scannable code here)\n")
+    except Exception:
+        pass
     print("  Windows Firewall will prompt on first run — allow it on Private networks.")
-    print("  Closing this window stops Scribe. Ctrl+C also works.\n")
+    print("  Quit from the app's settings panel (or Ctrl+C here).\n")
 
     if open_browser:
-        local_url = f"http://127.0.0.1:{cfg.server_port}/?token={cfg.server_token}"
         threading.Timer(1.0, _open_ui, args=(local_url,)).start()
 
     app.run(host="0.0.0.0", port=cfg.server_port, threaded=True)
@@ -329,6 +420,7 @@ PAGE = r"""<!doctype html>
     --overlay:rgba(58,54,44,.45);
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  [hidden] { display:none !important; }
   body {
     margin:0; min-height:100dvh; background:var(--ink); color:var(--text);
     font-family:var(--sans);
@@ -411,8 +503,14 @@ PAGE = r"""<!doctype html>
   .ghost:active { background:var(--ink); }
   .ghost:focus-visible { outline:2px solid var(--lamp-blue); outline-offset:2px; }
 
-  .label { font:600 10px var(--sans); letter-spacing:.14em; text-transform:uppercase;
-           color:var(--dim); margin-bottom:9px; }
+  .tabs { display:flex; gap:16px; margin-bottom:9px; }
+  .tab {
+    background:none; border:0; padding:0 0 4px; cursor:pointer;
+    font:600 10px var(--sans); letter-spacing:.14em; text-transform:uppercase;
+    color:var(--dim); border-bottom:2px solid transparent;
+  }
+  .tab[data-on="true"] { color:var(--text); border-bottom-color:var(--lamp-amber); }
+
   ul { list-style:none; margin:0; padding:0; max-height:56dvh; overflow-y:auto; }
   li a {
     display:flex; justify-content:space-between; gap:12px; align-items:baseline;
@@ -424,7 +522,7 @@ PAGE = r"""<!doctype html>
   li .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .empty { color:var(--dim); font-size:13px; padding:11px 0; }
 
-  /* Overlays: transcript reader + settings */
+  /* Overlays: reader (text or audio) + settings */
   .overlay {
     position:fixed; inset:0; background:var(--overlay); z-index:20;
     display:flex; align-items:center; justify-content:center; padding:18px;
@@ -440,6 +538,7 @@ PAGE = r"""<!doctype html>
   .sheet pre {
     margin:0; font:400 13px/1.7 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere;
   }
+  .sheet audio { width:100%; }
   .sheet .tools { display:flex; gap:8px; margin-left:auto; }
   .tool {
     background:transparent; border:1px solid var(--edge); border-radius:8px;
@@ -496,15 +595,18 @@ PAGE = r"""<!doctype html>
         <button class="ghost" id="usb">Pull from Pocket</button>
         <button class="ghost" id="refresh">Refresh</button>
       </div>
-      <div class="label">Transcripts</div>
+      <div class="tabs">
+        <button class="tab" id="tab-transcripts" data-on="true">Transcripts</button>
+        <button class="tab" id="tab-recordings" data-on="false">Recordings</button>
+      </div>
       <ul id="list"><li class="empty">Nothing yet. Press the button to start.</li></ul>
     </section>
   </div>
 </div>
 
-<!-- Transcript reader -->
+<!-- Reader: transcripts (text) and recordings (audio) -->
 <div class="overlay" id="viewer" hidden>
-  <div class="sheet" role="dialog" aria-modal="true" aria-label="Transcript">
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Reader">
     <header style="display:flex;align-items:center;gap:12px;">
       <span class="name" id="v-name"></span>
       <span class="tools">
@@ -513,7 +615,10 @@ PAGE = r"""<!doctype html>
         <button class="tool" id="v-close">Close</button>
       </span>
     </header>
-    <div class="body"><pre id="v-text"></pre></div>
+    <div class="body">
+      <pre id="v-text"></pre>
+      <audio id="v-audio" controls preload="metadata" hidden></audio>
+    </div>
   </div>
 </div>
 
@@ -525,6 +630,18 @@ PAGE = r"""<!doctype html>
       <span class="tools"><button class="tool" id="s-close">Close</button></span>
     </header>
     <div class="body">
+      <div class="field">
+        <label for="s-mic">Microphone</label>
+        <select id="s-mic"></select>
+        <div class="hint" id="s-loop"></div>
+      </div>
+
+      <div class="field">
+        <label for="s-dir">Recordings folder</label>
+        <input type="text" id="s-dir" autocomplete="off">
+        <div class="hint">Relative to the app folder, or an absolute path. Default: recordings</div>
+      </div>
+
       <div class="field two">
         <span>
           <label for="s-model">Whisper model</label>
@@ -564,6 +681,10 @@ PAGE = r"""<!doctype html>
 
       <div class="hint" id="s-port"></div>
       <button class="save" id="s-save">Save</button>
+      <div class="row" style="margin-top:14px; margin-bottom:0;">
+        <button class="ghost" id="s-viewlog">View log</button>
+        <button class="ghost" id="s-quit">Quit Scribe</button>
+      </div>
     </div>
   </div>
 </div>
@@ -572,6 +693,7 @@ PAGE = r"""<!doctype html>
 const token = new URLSearchParams(location.search).get("token") || "";
 const $ = id => document.getElementById(id);
 let state = "idle";
+let tab = "transcripts";
 
 const api = (path, opts={}) => fetch(path + (path.includes("?") ? "&" : "?") + "token=" + token,
   { headers: {"Content-Type":"application/json"}, ...opts });
@@ -603,7 +725,7 @@ async function poll() {
     $("cloud").dataset.on = s.push_to_pocket;
 
     if (state === "recording")        { $("btn").textContent = "Stop";  $("btn").disabled = false; $("caption").textContent = s.title; }
-    else if (state === "transcribing"){ $("btn").textContent = "Wait";  $("btn").disabled = true;  $("caption").textContent = "Transcribing"; }
+    else if (state === "transcribing"){ $("btn").textContent = "Wait";  $("btn").disabled = true;  $("caption").textContent = "Transcribing — the very first run downloads the model (~500 MB), so it can take a while"; }
     else if (state === "error")       { $("btn").textContent = "Start"; $("btn").disabled = false; $("caption").textContent = s.message || "Something failed"; }
     else                              { $("btn").textContent = "Start"; $("btn").disabled = false; $("caption").textContent = s.message || "Ready"; }
   } catch { $("caption").textContent = "Lost the connection"; }
@@ -618,14 +740,27 @@ $("btn").onclick = async () => {
   if (path === "/api/stop") setTimeout(loadList, 1500);
 };
 
-// --- transcripts -------------------------------------------------------
+// --- transcripts + recordings list ---------------------------------------
+function setTab(t) {
+  tab = t;
+  $("tab-transcripts").dataset.on = t === "transcripts";
+  $("tab-recordings").dataset.on = t === "recordings";
+  loadList();
+}
+$("tab-transcripts").onclick = () => setTab("transcripts");
+$("tab-recordings").onclick = () => setTab("recordings");
+
 async function loadList() {
+  const endpoint = tab === "transcripts" ? "/api/transcripts" : "/api/recordings";
+  const emptyMsg = tab === "transcripts"
+    ? "Nothing yet. Press the button to start."
+    : "No recordings yet.";
   try {
-    const files = await (await api("/api/transcripts")).json();
+    const files = await (await api(endpoint)).json();
     $("list").innerHTML = files.length
-      ? files.map(f => `<li><a href="/api/transcripts/${encodeURIComponent(f.name)}?token=${token}" data-name="${f.name}">
+      ? files.map(f => `<li><a href="${endpoint}/${encodeURIComponent(f.name)}?token=${token}" data-name="${f.name}">
           <span class="name">${f.name}</span><span class="when">${f.when}</span></a></li>`).join("")
-      : `<li class="empty">Nothing yet. Press the button to start.</li>`;
+      : `<li class="empty">${emptyMsg}</li>`;
   } catch {}
 }
 
@@ -633,16 +768,35 @@ $("list").onclick = e => {
   const a = e.target.closest("a[data-name]");
   if (!a) return;
   e.preventDefault();
-  openTranscript(a.dataset.name);
+  if (tab === "transcripts") openTranscript(a.dataset.name);
+  else openRecording(a.dataset.name);
 };
+
+function showViewer(name, downloadUrl) {
+  $("v-name").textContent = name;
+  $("v-download").href = downloadUrl;
+  $("viewer").hidden = false;
+}
 
 async function openTranscript(name) {
   const r = await api("/api/transcripts/" + encodeURIComponent(name));
   if (!r.ok) return;
-  $("v-name").textContent = name;
+  const audio = $("v-audio");
+  audio.hidden = true; audio.pause(); audio.removeAttribute("src");
+  $("v-text").hidden = false;
   $("v-text").textContent = await r.text();
-  $("v-download").href = "/api/transcripts/" + encodeURIComponent(name) + "?token=" + token;
-  $("viewer").hidden = false;
+  $("v-copy").hidden = false;
+  showViewer(name, "/api/transcripts/" + encodeURIComponent(name) + "?token=" + token);
+}
+
+function openRecording(name) {
+  const url = "/api/recordings/" + encodeURIComponent(name) + "?token=" + token;
+  $("v-text").hidden = true; $("v-text").textContent = "";
+  $("v-copy").hidden = true;
+  const audio = $("v-audio");
+  audio.hidden = false;
+  audio.src = url;
+  showViewer(name, url);
 }
 
 $("v-copy").onclick = async () => {
@@ -664,6 +818,7 @@ async function openSettings() {
   $("s-device").value = c.whisper_device;
   $("s-me").value = c.me_label;
   $("s-them").value = c.them_label;
+  $("s-dir").value = c.recordings_dir;
   $("s-api").checked = c.use_pocket_api;
   $("s-push").checked = c.push_to_pocket;
   $("s-prefer").checked = c.prefer_pocket_transcripts;
@@ -672,6 +827,22 @@ async function openSettings() {
   $("s-key").placeholder = c.pocket_key_set ? "saved — leave blank to keep" : "pk_...";
   $("s-port").textContent = `Serving on port ${c.server_port}. Changing the port needs a restart.`;
   $("settings").hidden = false;
+
+  // Devices load after the panel opens — enumerating them takes a moment.
+  const mic = $("s-mic");
+  mic.innerHTML = `<option value="">Loading devices…</option>`;
+  try {
+    const d = await (await api("/api/devices")).json();
+    const def = d.default ? `System default (${d.default})` : "System default";
+    mic.innerHTML = `<option value="">${def}</option>` +
+      d.mics.map(m => `<option value="${m.replaceAll('"',"&quot;")}">${m}</option>`).join("");
+    mic.value = d.mics.includes(c.mic_device) ? c.mic_device : "";
+    $("s-loop").textContent = d.loopback
+      ? `Speakers captured via: ${d.loopback}`
+      : (d.error ? "Device list unavailable: " + d.error : "");
+  } catch {
+    mic.innerHTML = `<option value="">System default</option>`;
+  }
 }
 $("gear").onclick = openSettings;
 
@@ -681,6 +852,8 @@ $("s-save").onclick = async () => {
     whisper_device: $("s-device").value,
     me_label: $("s-me").value.trim() || "Me",
     them_label: $("s-them").value.trim() || "Them",
+    mic_device: $("s-mic").value,
+    recordings_dir: $("s-dir").value.trim() || "recordings",
     use_pocket_api: $("s-api").checked,
     push_to_pocket: $("s-push").checked,
     prefer_pocket_transcripts: $("s-prefer").checked,
@@ -689,16 +862,38 @@ $("s-save").onclick = async () => {
   })});
   $("settings").hidden = true;
   poll();
+  if (tab === "recordings") loadList();
+};
+
+$("s-viewlog").onclick = async () => {
+  const r = await api("/api/log");
+  $("settings").hidden = true;
+  const audio = $("v-audio");
+  audio.hidden = true; audio.pause(); audio.removeAttribute("src");
+  $("v-text").hidden = false;
+  $("v-text").textContent = await r.text();
+  $("v-copy").hidden = false;
+  showViewer("scribe.log", "/api/log?token=" + token);
+  const body = document.querySelector("#viewer .body");
+  body.scrollTop = body.scrollHeight;
+};
+
+$("s-quit").onclick = async () => {
+  if (!confirm("Quit Scribe? A recording in progress would be lost.")) return;
+  try { await api("/api/quit", { method:"POST" }); } catch {}
+  $("settings").hidden = true;
+  $("caption").textContent = "Scribe stopped. You can close this window.";
+  setTimeout(() => window.close(), 400);
 };
 
 // --- overlays: backdrop click + Escape close ----------------------------
 for (const id of ["viewer", "settings"]) {
   $(id).addEventListener("click", e => { if (e.target === $(id)) $(id).hidden = true; });
 }
-$("v-close").onclick = () => $("viewer").hidden = true;
+$("v-close").onclick = () => { const a = $("v-audio"); a.pause(); $("viewer").hidden = true; };
 $("s-close").onclick = () => $("settings").hidden = true;
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") { $("viewer").hidden = true; $("settings").hidden = true; }
+  if (e.key === "Escape") { $("v-audio").pause(); $("viewer").hidden = true; $("settings").hidden = true; }
 });
 
 // --- misc --------------------------------------------------------------
