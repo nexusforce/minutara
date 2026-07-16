@@ -76,9 +76,9 @@ set PYTHONPATH=%~dp0lib;%~dp0
 @"
 @echo off
 cd /d "%~dp0"
-call scribe.bat serve
-pause
-"@ | Set-Content "$Target\Start Phone Remote.bat" -Encoding ASCII
+call scribe.bat serve --open
+if errorlevel 1 pause
+"@ | Set-Content "$Target\Scribe App.bat" -Encoding ASCII
 
 @"
 @echo off

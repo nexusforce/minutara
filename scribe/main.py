@@ -116,7 +116,7 @@ def cmd_serve(args, cfg) -> None:
 
     if args.port:
         cfg.server_port = args.port
-    serve(cfg)
+    serve(cfg, open_browser=args.open)
 
 
 def cmd_config(args, cfg) -> None:
@@ -165,8 +165,10 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("path")
     t.set_defaults(func=cmd_transcribe)
 
-    s = sub.add_parser("serve", help="start the phone remote")
+    s = sub.add_parser("serve", help="start the app (GUI + phone remote)")
     s.add_argument("--port", type=int)
+    s.add_argument("--open", action="store_true",
+                   help="also open the GUI in a window on this machine")
     s.set_defaults(func=cmd_serve)
 
     c = sub.add_parser("config", help="show current settings")

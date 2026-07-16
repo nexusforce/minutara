@@ -45,10 +45,19 @@ cd scribe
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 copy config.example.json config.json
+```
 
+Then **double-click `Scribe App.bat`** — the GUI opens in its own window
+(record, read transcripts, pull from the Pocket, settings, dark/light
+toggle). The console window that comes with it is the engine; closing it
+stops Scribe.
+
+The same things are available as commands, if you prefer a terminal:
+
+```powershell
 scribe.bat record --title "Board sync"    # capture a Zoom/Teams call, Ctrl+C to stop
 scribe.bat from-usb                       # pull new recordings off the Pocket
-scribe.bat serve                          # phone remote (URL + QR printed)
+scribe.bat serve                          # the GUI server (add --open to pop the window)
 scribe.bat config                         # show toggles and whether the drive is connected
 ```
 
@@ -103,12 +112,18 @@ Notes for ARM:
   and step back up if quality allows.
 - Recording and the phone remote are I/O-bound and run fine under emulation.
 
-## The phone remote
+## The GUI and the phone remote
 
-`scribe.bat serve` starts a small LAN server and prints a URL and QR code.
-Open it on your phone and add it to the home screen: one button to start and
-stop, an elapsed counter, a status lamp in the Pocket's own LED colors, your
-recent transcripts, and a "Pull from Pocket" button.
+They're the same thing. `Scribe App.bat` (or `scribe.bat serve --open`)
+starts a small LAN server and opens the page in an app window on the PC —
+one button to start and stop, an elapsed counter, a status lamp in the
+Pocket's own LED colors, a transcript reader with copy/download, a
+"Pull from Pocket" button, a settings panel (Whisper model, speaker labels,
+cloud toggles, API key — no JSON editing), and a dark/light toggle that
+follows the OS until you override it.
+
+The server also prints a URL and QR code: open that on your phone (same
+Wi-Fi) and add it to the home screen, and the identical page is your remote.
 
 - Phone and laptop must share a network. Corporate/guest Wi-Fi with client
   isolation blocks this; a phone hotspot is the fallback.
