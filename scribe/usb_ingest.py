@@ -8,10 +8,12 @@ We read that folder like any other directory.
 
 Two things worth knowing before you rely on this:
 
-  * The exact file layout inside RECORD is UNVERIFIED. Pocket's docs confirm
-    the drive name and the RECORD folder, but not the file naming or the audio
-    container. AUDIO_SUFFIXES below is a guess covering the likely candidates.
-    Plug the device in once, look at what's actually there, and narrow it.
+  * Layout, verified against a real device (2026-01): RECORD contains one
+    folder per day, and the audio is mp3 —
+
+        RECORD\2026-01-15\*.mp3
+
+    We rglob the whole tree, so the dated folders are handled naturally.
   * The device must be in USB Mode, which is toggled from the phone app.
     Opening the phone app is also what triggers cloud sync of unsynced
     recordings, so if keeping audio off their servers matters, look for the
@@ -31,8 +33,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-# Best guess — narrow this once you've seen the real drive.
-AUDIO_SUFFIXES = {".wav", ".opus", ".m4a", ".mp3", ".flac", ".ogg"}
+# The device records mp3 (verified on a real RECORD folder). Widen this only
+# if a firmware update changes the container.
+AUDIO_SUFFIXES = {".mp3"}
 
 
 @dataclass
@@ -82,10 +85,14 @@ def _load_manifest(path: Path) -> dict:
     return {}
 
 
-def _key(f: Path) -> str:
-    """Identify a file by name + size + mtime so re-copies are idempotent."""
+def _key(f: Path, root: Path) -> str:
+    """
+    Identify a file by relative path + size + mtime so re-copies are
+    idempotent. The path matters: the device names files per dated folder,
+    so bare names like 0001.mp3 repeat across days.
+    """
     st = f.stat()
-    return f"{f.name}:{st.st_size}:{int(st.st_mtime)}"
+    return f"{f.relative_to(root).as_posix()}:{st.st_size}:{int(st.st_mtime)}"
 
 
 def list_new(record_dir: Path, manifest_path: Path) -> list[Path]:
@@ -94,7 +101,7 @@ def list_new(record_dir: Path, manifest_path: Path) -> list[Path]:
     for f in sorted(record_dir.rglob("*")):
         if not f.is_file() or f.suffix.lower() not in AUDIO_SUFFIXES:
             continue
-        if _key(f) not in seen:
+        if _key(f, record_dir) not in seen:
             out.append(f)
     return out
 
@@ -113,14 +120,18 @@ def ingest(
     copied: list[Path] = []
 
     for src in new_files:
-        dest = dest_dir / f"pocket-{src.name}"
+        # Fold the dated folder into the local name — RECORD\2026-01-15\0001.mp3
+        # becomes pocket-2026-01-15-0001.mp3, so days can't collide.
+        rel_parts = src.relative_to(record_dir).parts
+        stem = "pocket-" + "-".join(rel_parts[:-1] + (src.stem,))
+        dest = dest_dir / f"{stem}{src.suffix}"
         n = 1
         while dest.exists():
-            dest = dest_dir / f"pocket-{src.stem}-{n}{src.suffix}"
+            dest = dest_dir / f"{stem}-{n}{src.suffix}"
             n += 1
 
         shutil.copy2(src, dest)          # copy2 keeps the original timestamp
-        seen[_key(src)] = {
+        seen[_key(src, record_dir)] = {
             "local": str(dest.name),
             "ingested_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }

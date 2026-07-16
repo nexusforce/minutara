@@ -116,10 +116,9 @@ Developer → API Keys) — organization keys are rejected by the upload endpoin
 
 Marked `UNVERIFIED` in the source, in honesty rather than confidence:
 
-- **File layout inside the Pocket's `RECORD` folder** — drive and folder names
-  are documented; file naming and audio container are not. `AUDIO_SUFFIXES`
-  in `scribe/usb_ingest.py` casts a wide net; narrow it after one look at the
-  real drive. Most likely thing to need a fix.
+- ~~File layout inside the Pocket's `RECORD` folder~~ — **verified** on a real
+  device (2026-01): one folder per day, mp3 audio (`RECORD\2026-01-15\*.mp3`).
+  Ingest handles the dated folders and keeps the date in the local filename.
 - **Pocket API response shapes** — the docs render every example payload as
   `null`, so field names are inferred. Print one raw response and correct.
 - Enabling USB Mode requires the Pocket phone app, and opening the app can
