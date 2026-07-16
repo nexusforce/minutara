@@ -1,2 +1,184 @@
-# scribe
-Audio Transcriber
+# Scribe
+
+Local-first meeting capture and transcription for Windows. A Granola
+replacement that runs on your own machine, treats a [Pocket](https://heypocket.com)
+device as a second input, and sends nothing to anyone's servers unless you
+switch it on.
+
+```
+  Zoom/Teams on your PC ──► WASAPI loopback + mic ──┐
+                                                    ├─► local Whisper ─► transcripts/*.txt
+  Pocket device ──► USB-C (plain drive) ────────────┘
+                                                    ⋯► Pocket cloud (off by default)
+
+  Phone ──► http://<laptop>:8765 ──► start / stop / read
+```
+
+## Why it exists
+
+Meeting note-takers either charge a subscription (Granola, $14/mo), put a bot
+in your call, or route your conversations through their cloud. Scribe does
+none of that:
+
+- **Capture is local.** Windows WASAPI loopback records what your speakers
+  play; your mic is recorded separately. No bot joins, nobody is notified,
+  nothing leaves the machine.
+- **Transcription is local.** [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+  runs on your CPU (or GPU). The model lives in a folder next to the app.
+- **Speaker attribution is free.** Mic and loopback are kept as separate
+  channels of one stereo WAV — left is you, right is everyone else — and each
+  channel is transcribed independently. The you-vs-them split comes from the
+  wiring, not from a diarization model guessing.
+- **The Pocket is treated as a drive.** With USB Mode on, the device mounts
+  as a `POCKET` volume with a `RECORD` folder. Scribe copies new files off it
+  and transcribes them locally. In-person meetings and Zoom calls end up in
+  the same `transcripts/` folder.
+
+Transcripts are plain `.txt` — paste them into whatever LLM you like, or
+point your notes system at the folder.
+
+## Quick start (from a clone)
+
+```powershell
+git clone https://github.com/nexusforce/scribe
+cd scribe
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+copy config.example.json config.json
+```
+
+Then **double-click `Scribe App.bat`** — the GUI opens in its own window
+(record, read transcripts, pull from the Pocket, settings, dark/light
+toggle). The console window that comes with it is the engine; closing it
+stops Scribe.
+
+The same things are available as commands, if you prefer a terminal:
+
+```powershell
+scribe.bat record --title "Board sync"    # capture a Zoom/Teams call, Ctrl+C to stop
+scribe.bat from-usb                       # pull new recordings off the Pocket
+scribe.bat serve                          # the GUI server (add --open to pop the window)
+scribe.bat config                         # show toggles and whether the drive is connected
+```
+
+First transcription downloads the Whisper model (~500 MB for `small.en`).
+
+On a **Snapdragon / ARM64** laptop, install the **x64** build of Python from
+python.org (the "Windows installer (64-bit)"), *not* the ARM64 build — the
+capture and transcription wheels are x64-only and Windows 11 runs them under
+emulation. See [Windows on ARM](#windows-on-arm-snapdragon-laptops) below.
+
+## Portable build (run from a USB stick)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Scribe
+```
+
+Run once on a machine with internet; the stick works offline afterward. It
+bundles embeddable Python, all dependencies, the app, and a pre-baked Whisper
+model (~2 GB total). Nothing is installed on the host, no admin needed, and
+all data — recordings, transcripts, config — stays on the stick.
+
+Realities of stick life: use USB 3.0 (the model is read on every run),
+SmartScreen may grumble at an unsigned interpreter on removable media, and a
+locked-down work laptop with application allowlisting may refuse to run it at
+all.
+
+## Windows on ARM (Snapdragon laptops)
+
+Use **x64 Python under emulation** — don't try a native ARM64 install. Two
+load-bearing dependencies, `PyAudioWPatch` (WASAPI capture) and `ctranslate2`
+(faster-whisper's engine), publish no `win_arm64` wheels, so a native ARM64
+Python cannot record or transcribe. Windows 11 on ARM runs x64 Python
+transparently through the Prism emulator, so both install paths work:
+
+- **Installed clone:** grab the *x64* Python from python.org (the "Windows
+  installer (64-bit)", not the ARM64 one), then follow
+  [Quick start](#quick-start-from-a-clone) unchanged.
+- **Portable stick:** the build script already fetches x64 embeddable Python,
+  so it works as-is — even when run on the ARM machine itself:
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Scribe
+  ```
+
+Notes for ARM:
+
+- **Windows 11 is required** (its x64 emulation covers everything here);
+  24H2 or later is noticeably faster because Prism adds AVX/AVX2 support,
+  which faster-whisper uses heavily.
+- **Transcription pays an emulation tax.** If `small.en` feels slow, build
+  with `-Model base.en` (or set `"whisper_model": "base.en"` in config.json)
+  and step back up if quality allows.
+- Recording and the phone remote are I/O-bound and run fine under emulation.
+
+## The GUI and the phone remote
+
+They're the same thing. `Scribe App.bat` (or `scribe.bat serve --open`)
+starts a small LAN server and opens the page in an app window on the PC —
+one button to start and stop, an elapsed counter, a status lamp in the
+Pocket's own LED colors, a transcript reader with copy/download, a
+"Pull from Pocket" button, a settings panel (Whisper model, speaker labels,
+cloud toggles, API key — no JSON editing), and a dark/light toggle that
+follows the OS until you override it.
+
+The server also prints a URL and QR code: open that on your phone (same
+Wi-Fi) and add it to the home screen, and the identical page is your remote.
+
+- Phone and laptop must share a network. Corporate/guest Wi-Fi with client
+  isolation blocks this; a phone hotspot is the fallback.
+- Auth is a token in the URL, generated on first run into `config.json`.
+  Plain HTTP — treat it as LAN-only and never port-forward it.
+- Allow the Windows Firewall prompt on **Private** networks only.
+
+## Configuration
+
+Copy `config.example.json` to `config.json`. Everything cloud-facing defaults
+to **off**:
+
+| Setting | On means |
+|---|---|
+| `use_pocket_api` | Master switch for anything network-facing |
+| `push_to_pocket` | Upload PC-captured audio into your Pocket account |
+| `prefer_pocket_transcripts` | Use Pocket's transcription instead of local Whisper |
+| `delete_from_device` | Remove files from the device after a verified copy |
+
+`config.json` is gitignored because it holds your Pocket API key and the
+remote's auth token. Don't commit it.
+
+For the Pocket API, use a **personal** key (`pk_...` from Settings →
+Developer → API Keys) — organization keys are rejected by the upload endpoint.
+
+## Commands
+
+| Command | Does |
+|---|---|
+| `record --title "..."` | Capture system audio + mic until Ctrl+C, then transcribe |
+| `from-usb [--watch]` | Copy new recordings off the Pocket drive and transcribe |
+| `pull [--days N] [--id X]` | Fetch from Pocket's cloud API (requires the toggle) |
+| `transcribe <file>` | Transcribe any audio file you already have |
+| `serve [--port N]` | Start the phone remote |
+| `config` | Show current settings and device status |
+
+## Known unknowns
+
+Marked `UNVERIFIED` in the source, in honesty rather than confidence:
+
+- ~~File layout inside the Pocket's `RECORD` folder~~ — **verified** on a real
+  device (2026-01): one folder per day, mp3 audio (`RECORD\2026-01-15\*.mp3`).
+  Ingest handles the dated folders and keeps the date in the local filename.
+- **Pocket API response shapes** — the docs render every example payload as
+  `null`, so field names are inferred. Print one raw response and correct.
+- Enabling USB Mode requires the Pocket phone app, and opening the app can
+  trigger cloud sync of unsynced recordings. Test the loop with a throwaway
+  recording before a real meeting.
+
+## Consent
+
+Scribe records conversations without notifying participants — that's the
+point of bot-free capture, and it's also a legal question that varies by
+jurisdiction. Recording-consent laws are on you, not the tool.
+
+## License
+
+MIT
