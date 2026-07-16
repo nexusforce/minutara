@@ -15,6 +15,7 @@ should not be able to drive it.
 from __future__ import annotations
 
 import os
+import queue
 import socket
 import threading
 from datetime import datetime, timezone
@@ -32,42 +33,114 @@ log = get("scribe.server")
 AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus"}
 
 
-class Recorder:
-    """Owns the single recording session and the worker thread behind it."""
+class Transcriber:
+    """
+    A small queue + one worker thread. Transcription is deliberately
+    decoupled from capture: the WAV is already safe on disk before anything
+    here runs, a failure never touches the audio, and you can start a new
+    recording while an old one is still transcribing.
+    """
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self.q: queue.Queue = queue.Queue()
+        self.current = ""
+        self.last_message = ""
+        threading.Thread(target=self._work, daemon=True).start()
+
+    def enqueue(self, path: Path, title: str | None = None,
+                duration_s: float | None = None,
+                recorded_at: datetime | None = None) -> None:
+        log.info("queued for transcription: %s", path.name)
+        self.q.put((Path(path), title, duration_s, recorded_at))
+
+    def _work(self) -> None:
+        while True:
+            path, title, duration_s, recorded_at = self.q.get()
+            self.current = path.name
+            try:
+                txt = process(path, self.cfg, title=title or path.stem,
+                              duration_s=duration_s, recorded_at=recorded_at)
+                self.last_message = f"Saved {txt.name}"
+            except Exception as e:
+                log.exception("transcription failed: %s", path.name)
+                self.last_message = f"Transcription of {path.name} failed: {e}"
+            finally:
+                self.current = ""
+
+    def status(self) -> dict:
+        return {
+            "busy": bool(self.current),
+            "name": self.current,
+            "queued": self.q.qsize(),
+            "message": self.last_message,
+        }
+
+
+class Recorder:
+    """Owns the single recording session and the worker thread behind it."""
+
+    def __init__(self, cfg: Config, transcriber: Transcriber):
+        self.cfg = cfg
+        self.transcriber = transcriber
         self.lock = threading.Lock()
         self.stop_event: threading.Event | None = None
+        self.pause_event: threading.Event | None = None
         self.thread: threading.Thread | None = None
         self.title = ""
         self.started_at: float | None = None
-        self.state = "idle"  # idle | recording | transcribing | error
+        self.paused_at: float | None = None
+        self.paused_total = 0.0
+        self.state = "idle"  # idle | recording | paused | error
         self.last_message = ""
         self.last_transcript: str | None = None
 
     def start(self, title: str) -> tuple[bool, str]:
         with self.lock:
-            if self.state in ("recording", "transcribing"):
+            if self.state in ("recording", "paused"):
                 return False, f"Already {self.state}."
             self.title = title or "Meeting"
             self.stop_event = threading.Event()
+            self.pause_event = threading.Event()
             self.state = "recording"
             self.last_message = ""
             self.started_at = datetime.now(timezone.utc).timestamp()
+            self.paused_at = None
+            self.paused_total = 0.0
             self.thread = threading.Thread(target=self._run, daemon=True)
             self.thread.start()
             log.info("recording started: %r", self.title)
             return True, "Recording."
 
-    def stop(self) -> tuple[bool, str]:
+    def pause(self) -> tuple[bool, str]:
         with self.lock:
             if self.state != "recording":
                 return False, "Not recording."
+            self.pause_event.set()
+            self.paused_at = datetime.now(timezone.utc).timestamp()
+            self.state = "paused"
+            log.info("recording paused")
+            return True, "Paused."
+
+    def resume(self) -> tuple[bool, str]:
+        with self.lock:
+            if self.state != "paused":
+                return False, "Not paused."
+            self.paused_total += datetime.now(timezone.utc).timestamp() - self.paused_at
+            self.paused_at = None
+            self.pause_event.clear()
+            self.state = "recording"
+            log.info("recording resumed")
+            return True, "Recording."
+
+    def stop(self) -> tuple[bool, str]:
+        with self.lock:
+            if self.state not in ("recording", "paused"):
+                return False, "Not recording."
+            self.pause_event.clear()
             self.stop_event.set()
-            self.state = "transcribing"
-            log.info("recording stopped; transcribing")
-            return True, "Stopped. Transcribing."
+            log.info("recording stopping")
+            return True, "Stopped. Saving."
 
     def _run(self) -> None:
         from .capture import record
@@ -75,30 +148,37 @@ class Recorder:
         try:
             name = stamped_name(self.title)
             wav = self.cfg.recordings_dir / f"{name}.wav"
-            result = record(wav, self.stop_event, mic_name=self.cfg.mic_device)
+            result = record(wav, self.stop_event, mic_name=self.cfg.mic_device,
+                            pause_event=self.pause_event)
 
-            txt = process(
-                wav, self.cfg,
-                title=self.title,
-                duration_s=result.duration_s,
-                recorded_at=datetime.fromtimestamp(result.started_at, tz=timezone.utc),
-            )
-            self.last_transcript = txt.name
+            # The audio is safe on disk from here on, whatever happens next.
             self.state = "idle"
-            self.last_message = f"Saved {txt.name}"
+            if self.cfg.auto_transcribe:
+                self.last_message = f"Saved {wav.name}"
+                self.transcriber.enqueue(
+                    wav, title=self.title,
+                    duration_s=result.duration_s,
+                    recorded_at=datetime.fromtimestamp(result.started_at, tz=timezone.utc),
+                )
+            else:
+                self.last_message = (f"Saved {wav.name} — transcribe it from "
+                                     "the Recordings tab.")
         except Exception as e:
             log.exception("recording session failed")
             self.state = "error"
             self.last_message = str(e)
 
     def status(self) -> dict:
+        now = datetime.now(timezone.utc).timestamp()
         elapsed = 0.0
-        if self.state == "recording" and self.started_at:
-            elapsed = datetime.now(timezone.utc).timestamp() - self.started_at
+        if self.started_at and self.state == "recording":
+            elapsed = now - self.started_at - self.paused_total
+        elif self.started_at and self.state == "paused":
+            elapsed = self.paused_at - self.started_at - self.paused_total
         return {
             "state": self.state,
             "title": self.title,
-            "elapsed": elapsed,
+            "elapsed": max(elapsed, 0.0),
             "message": self.last_message,
             "last_transcript": self.last_transcript,
             "pocket_enabled": self.cfg.pocket_enabled,
@@ -124,7 +204,8 @@ def local_ip() -> str:
 EDITABLE_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "whisper_model", "whisper_device",
-    "me_label", "them_label", "mic_device", "delete_from_device",
+    "me_label", "them_label", "mic_device", "auto_transcribe",
+    "delete_from_device",
 )
 
 
@@ -135,7 +216,8 @@ def _shutdown() -> None:
 
 def create_app(cfg: Config) -> tuple[Flask, Recorder]:
     app = Flask(__name__)
-    rec = Recorder(cfg)
+    trans = Transcriber(cfg)
+    rec = Recorder(cfg, trans)
 
     def authed() -> bool:
         token = request.args.get("token") or request.headers.get("X-Token", "")
@@ -152,7 +234,9 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
 
     @app.get("/api/status")
     def status():
-        return jsonify(rec.status())
+        s = rec.status()
+        s["transcriber"] = trans.status()
+        return jsonify(s)
 
     @app.post("/api/start")
     def start():
@@ -160,10 +244,29 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         ok, msg = rec.start(title)
         return jsonify({"ok": ok, "message": msg}), (200 if ok else 409)
 
+    @app.post("/api/pause")
+    def pause():
+        ok, msg = rec.pause()
+        return jsonify({"ok": ok, "message": msg}), (200 if ok else 409)
+
+    @app.post("/api/resume")
+    def resume():
+        ok, msg = rec.resume()
+        return jsonify({"ok": ok, "message": msg}), (200 if ok else 409)
+
     @app.post("/api/stop")
     def stop():
         ok, msg = rec.stop()
         return jsonify({"ok": ok, "message": msg}), (200 if ok else 409)
+
+    @app.post("/api/transcribe")
+    def transcribe_one():
+        name = Path(str((request.get_json(silent=True) or {}).get("name", ""))).name
+        f = cfg.recordings_dir / name
+        if not name or not f.exists():
+            return jsonify({"ok": False, "message": "No recording by that name."}), 404
+        trans.enqueue(f)
+        return jsonify({"ok": True, "message": f"Queued {name} for transcription."})
 
     @app.get("/api/config")
     def get_config():
@@ -173,6 +276,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             "me_label": cfg.me_label,
             "them_label": cfg.them_label,
             "mic_device": cfg.mic_device,
+            "auto_transcribe": cfg.auto_transcribe,
             "recordings_dir": str(cfg.recordings_dir),
             "use_pocket_api": cfg.use_pocket_api,
             "push_to_pocket": cfg.push_to_pocket,
@@ -312,19 +416,15 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         if not result.copied:
             return jsonify({"ok": True, "message": "Nothing new on the device."})
 
-        def work():
-            for f in result.copied:
-                try:
-                    process(f, cfg, title=f.stem)
-                except Exception:
-                    log.exception("could not transcribe %s", f.name)
-
-        threading.Thread(target=work, daemon=True).start()
         n = len(result.copied)
-        return jsonify({
-            "ok": True,
-            "message": f"Copied {n} recording{'s' if n != 1 else ''}. Transcribing now.",
-        })
+        if cfg.auto_transcribe:
+            for f in result.copied:
+                trans.enqueue(f)
+            msg = f"Copied {n} recording{'s' if n != 1 else ''}. Transcribing now."
+        else:
+            msg = (f"Copied {n} recording{'s' if n != 1 else ''} — transcribe "
+                   "them from the Recordings tab.")
+        return jsonify({"ok": True, "message": msg})
 
     return app, rec
 
@@ -455,6 +555,7 @@ PAGE = r"""<!doctype html>
     flex:none; transition:background .25s, color .25s;
   }
   body[data-state="recording"] .lamp { background:var(--lamp-amber); color:var(--lamp-amber); animation:breathe 2.4s ease-in-out infinite; }
+  body[data-state="paused"] .lamp { background:var(--lamp-amber); color:var(--lamp-amber); animation:none; opacity:.55; }
   body[data-state="transcribing"] .lamp { background:var(--lamp-blue); color:var(--lamp-blue); animation:breathe 1s ease-in-out infinite; }
   body[data-state="error"] .lamp { background:var(--lamp-red); color:var(--lamp-red); animation:none; }
   @keyframes breathe { 0%,100%{opacity:1} 50%{opacity:.35} }
@@ -503,6 +604,14 @@ PAGE = r"""<!doctype html>
   .button:focus-visible { outline:2px solid var(--lamp-blue); outline-offset:4px; }
   .button:disabled { opacity:.45; cursor:default; }
   body[data-state="recording"] .button { color:var(--lamp-amber); border-color:var(--lamp-amber); }
+  body[data-state="paused"] .button { color:var(--dim); }
+  .pause-btn {
+    display:block; width:128px; margin:12px auto 0;
+    background:transparent; border:1px solid var(--edge); border-radius:9px;
+    color:var(--dim); font:500 12px var(--sans); padding:9px; cursor:pointer;
+  }
+  .pause-btn:hover { color:var(--text); border-color:var(--edge-hi); }
+  body[data-state="paused"] .pause-btn { color:var(--lamp-amber); border-color:var(--lamp-amber); }
 
   .title-input {
     display:block; width:100%; max-width:290px; margin:24px auto 4px;
@@ -531,12 +640,19 @@ PAGE = r"""<!doctype html>
   .tab[data-on="true"] { color:var(--text); border-bottom-color:var(--lamp-amber); }
 
   ul { list-style:none; margin:0; padding:0; max-height:56dvh; overflow-y:auto; }
+  li { display:flex; gap:6px; margin-bottom:5px; align-items:stretch; }
   li a {
-    display:flex; justify-content:space-between; gap:12px; align-items:baseline;
-    padding:11px 12px; margin-bottom:5px; border-radius:8px; background:var(--ink);
+    flex:1; display:flex; justify-content:space-between; gap:12px; align-items:baseline;
+    padding:11px 12px; border-radius:8px; background:var(--ink);
     color:var(--text); text-decoration:none; font-size:13px; border:1px solid transparent;
+    min-width:0;
   }
   li a:hover { border-color:var(--edge); }
+  .row-act {
+    flex:none; background:var(--ink); border:1px solid transparent; border-radius:8px;
+    color:var(--dim); font:500 11px var(--sans); padding:0 12px; cursor:pointer;
+  }
+  .row-act:hover { color:var(--text); border-color:var(--edge); }
   li .when { color:var(--dim); font:400 11px/1 var(--mono); flex:none; }
   li .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .empty { color:var(--dim); font-size:13px; padding:11px 0; }
@@ -605,6 +721,7 @@ PAGE = r"""<!doctype html>
         <div class="counter" id="counter" role="timer" aria-live="off">00:00</div>
         <div class="caption" id="caption">Ready</div>
         <button class="button" id="btn">Start</button>
+        <button class="pause-btn" id="pause" hidden>Pause</button>
         <input class="title-input" id="title" placeholder="What is this meeting?"
                autocomplete="off" enterkeyhint="done">
       </div>
@@ -660,6 +777,12 @@ PAGE = r"""<!doctype html>
         <label for="s-dir">Recordings folder</label>
         <input type="text" id="s-dir" autocomplete="off">
         <div class="hint">Relative to the app folder, or an absolute path. Default: recordings</div>
+      </div>
+
+      <div class="field">
+        <label>Transcription</label>
+        <label class="check"><input type="checkbox" id="s-auto"> Transcribe automatically when a recording stops</label>
+        <div class="hint">Off means recordings just save; use the Transcribe button in the Recordings tab when you're ready.</div>
       </div>
 
       <div class="field two">
@@ -756,29 +879,52 @@ $("theme").onclick = () =>
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 
 // --- recorder ----------------------------------------------------------
+let wasBusy = false;
+
 async function poll() {
   try {
     const s = await (await api("/api/status")).json();
+    const t = s.transcriber || {};
     state = s.state;
-    document.body.dataset.state = state;
+    // The lamp breathes blue while the background transcriber works.
+    document.body.dataset.state = (state === "idle" && t.busy) ? "transcribing" : state;
     $("counter").textContent = clock(s.elapsed);
     $("cloud").textContent = s.push_to_pocket ? "Pocket on" : "Local";
     $("cloud").dataset.on = s.push_to_pocket;
 
-    if (state === "recording")        { $("btn").textContent = "Stop";  $("btn").disabled = false; $("caption").textContent = s.title; }
-    else if (state === "transcribing"){ $("btn").textContent = "Wait";  $("btn").disabled = true;  $("caption").textContent = "Transcribing — the very first run downloads the model (~500 MB), so it can take a while"; }
-    else if (state === "error")       { $("btn").textContent = "Start"; $("btn").disabled = false; $("caption").textContent = s.message || "Something failed"; }
-    else                              { $("btn").textContent = "Start"; $("btn").disabled = false; $("caption").textContent = s.message || "Ready"; }
+    const active = state === "recording" || state === "paused";
+    $("pause").hidden = !active;
+    $("pause").textContent = state === "paused" ? "Resume" : "Pause";
+    $("btn").textContent = active ? "Stop" : "Start";
+    $("btn").disabled = false;
+
+    if (state === "recording")   $("caption").textContent = s.title;
+    else if (state === "paused") $("caption").textContent = "Paused — " + s.title;
+    else if (state === "error")  $("caption").textContent = s.message || "Something failed";
+    else if (t.busy)             $("caption").textContent =
+      `Transcribing ${t.name}` + (t.queued ? ` (+${t.queued} queued)` : "") +
+      " — the very first run downloads the model (~500 MB), so it can take a while";
+    else $("caption").textContent = t.message || s.message || "Ready";
+
+    // Refresh the lists the moment the transcriber finishes a job.
+    if (wasBusy && !t.busy) loadList();
+    wasBusy = !!t.busy;
   } catch { $("caption").textContent = "Lost the connection"; }
 }
 
 $("btn").onclick = async () => {
-  const path = state === "recording" ? "/api/stop" : "/api/start";
-  const body = state === "recording" ? undefined : JSON.stringify({ title: $("title").value || "Meeting" });
+  const active = state === "recording" || state === "paused";
+  const path = active ? "/api/stop" : "/api/start";
+  const body = active ? undefined : JSON.stringify({ title: $("title").value || "Meeting" });
   $("btn").disabled = true;
   await api(path, { method:"POST", body });
   await poll();
-  if (path === "/api/stop") setTimeout(loadList, 1500);
+  if (path === "/api/stop") setTimeout(loadList, 800);
+};
+
+$("pause").onclick = async () => {
+  await api(state === "paused" ? "/api/resume" : "/api/pause", { method:"POST" });
+  await poll();
 };
 
 // --- transcripts + recordings list ---------------------------------------
@@ -800,12 +946,22 @@ async function loadList() {
     const files = await (await api(endpoint)).json();
     $("list").innerHTML = files.length
       ? files.map(f => `<li><a href="${endpoint}/${encodeURIComponent(f.name)}?token=${token}" data-name="${f.name}">
-          <span class="name">${f.name}</span><span class="when">${f.when}</span></a></li>`).join("")
+          <span class="name">${f.name}</span><span class="when">${f.when}</span></a>${
+          tab === "recordings" ? `<button class="row-act" data-act="transcribe" data-name="${f.name}">Transcribe</button>` : ""
+        }</li>`).join("")
       : `<li class="empty">${emptyMsg}</li>`;
   } catch {}
 }
 
-$("list").onclick = e => {
+$("list").onclick = async e => {
+  const act = e.target.closest("button[data-act='transcribe']");
+  if (act) {
+    act.textContent = "Queued";
+    const r = await (await api("/api/transcribe", { method:"POST",
+      body: JSON.stringify({ name: act.dataset.name }) })).json();
+    $("caption").textContent = r.message;
+    return;
+  }
   const a = e.target.closest("a[data-name]");
   if (!a) return;
   e.preventDefault();
@@ -860,6 +1016,7 @@ async function openSettings() {
   $("s-me").value = c.me_label;
   $("s-them").value = c.them_label;
   $("s-dir").value = c.recordings_dir;
+  $("s-auto").checked = c.auto_transcribe;
   $("s-api").checked = c.use_pocket_api;
   $("s-push").checked = c.push_to_pocket;
   $("s-prefer").checked = c.prefer_pocket_transcripts;
@@ -894,6 +1051,7 @@ $("s-save").onclick = async () => {
     me_label: $("s-me").value.trim() || "Me",
     them_label: $("s-them").value.trim() || "Them",
     mic_device: $("s-mic").value,
+    auto_transcribe: $("s-auto").checked,
     recordings_dir: $("s-dir").value.trim() || "recordings",
     use_pocket_api: $("s-api").checked,
     push_to_pocket: $("s-push").checked,

@@ -51,6 +51,7 @@ class Config:
 
     # --- Capture ---
     mic_device: str = ""               # substring of a mic name; "" = system default
+    auto_transcribe: bool = True       # transcribe automatically when a recording stops
 
     # --- USB ingest ---
     usb_volume_label: str = "POCKET"
@@ -107,7 +108,8 @@ def load() -> Config:
     for key in (
         "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
         "pocket_api_key", "whisper_model", "whisper_device", "me_label",
-        "them_label", "mic_device", "usb_volume_label", "usb_record_dir",
+        "them_label", "mic_device", "auto_transcribe",
+        "usb_volume_label", "usb_record_dir",
         "delete_from_device", "server_port", "server_token",
     ):
         default = getattr(cfg, key)
@@ -152,6 +154,7 @@ def save(cfg: Config) -> None:
         "me_label": cfg.me_label,
         "them_label": cfg.them_label,
         "mic_device": cfg.mic_device,
+        "auto_transcribe": cfg.auto_transcribe,
         "recordings_dir": str(cfg.recordings_dir),
         "usb_volume_label": cfg.usb_volume_label,
         "usb_record_dir": cfg.usb_record_dir,

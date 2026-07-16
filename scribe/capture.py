@@ -114,14 +114,24 @@ def _resample_mono(data: np.ndarray, src_rate: int, src_channels: int) -> np.nda
 
 
 class _StreamRecorder(threading.Thread):
-    """Pulls from one device into a list of float32 mono numpy arrays."""
+    """
+    Pulls from one device into a raw int16 mono .part file at TARGET_RATE.
 
-    def __init__(self, p: pyaudio.PyAudio, device: dict, stop_event: threading.Event):
+    Written to disk incrementally, not buffered in RAM: a crash or power cut
+    mid-meeting loses at most the last chunk, and an hour of audio doesn't
+    occupy an hour of memory. record() merges the parts into the final WAV
+    and deletes them; leftover .part files after a crash hold raw
+    16 kHz mono s16le PCM (ffmpeg can rescue them).
+    """
+
+    def __init__(self, p: pyaudio.PyAudio, device: dict, stop_event: threading.Event,
+                 pause_event: threading.Event | None, part_path: Path):
         super().__init__(daemon=True)
         self.p = p
         self.device = device
         self.stop_event = stop_event
-        self.frames: list[np.ndarray] = []
+        self.pause_event = pause_event
+        self.part_path = part_path
         self.error: Exception | None = None
 
     def run(self) -> None:
@@ -136,35 +146,40 @@ class _StreamRecorder(threading.Thread):
                 input_device_index=self.device["index"],
                 frames_per_buffer=CHUNK,
             )
-            while not self.stop_event.is_set():
-                raw = stream.read(CHUNK, exception_on_overflow=False)
-                arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-                self.frames.append(_resample_mono(arr, rate, channels))
+            with open(self.part_path, "wb") as out:
+                while not self.stop_event.is_set():
+                    raw = stream.read(CHUNK, exception_on_overflow=False)
+                    if self.pause_event is not None and self.pause_event.is_set():
+                        continue  # keep the stream hot, drop the audio
+                    arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                    mono = _resample_mono(arr, rate, channels)
+                    out.write((np.clip(mono, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
             stream.stop_stream()
             stream.close()
         except Exception as e:  # surfaced by the caller after join()
             self.error = e
 
     def collect(self) -> np.ndarray:
-        if self.error:
-            raise self.error
-        if not self.frames:
+        """Whatever made it to disk, even if the stream died partway."""
+        if not self.part_path.exists():
             return np.zeros(0, dtype=np.float32)
-        return np.concatenate(self.frames)
+        return np.fromfile(self.part_path, dtype=np.int16).astype(np.float32) / 32768.0
 
 
 def record(out_path: Path, stop_event: threading.Event | None = None,
-           mic_name: str = "") -> CaptureResult:
+           mic_name: str = "", pause_event: threading.Event | None = None) -> CaptureResult:
     """
     Record until stop_event is set (or Ctrl+C). Writes a 16kHz stereo WAV.
     mic_name picks a specific microphone by (partial) name; "" = default.
+    While pause_event is set, audio is discarded (the recording pauses).
 
-    Usage:
-        stop = threading.Event()
-        # ... set stop from a hotkey / signal handler / UI button
-        record(Path("meeting.wav"), stop)
+    Saving is unconditional: if one stream dies mid-meeting the other
+    channel is still written; it only raises if nothing was captured at all.
     """
     stop_event = stop_event or threading.Event()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    mic_part = Path(str(out_path) + ".mic.part")
+    spk_part = Path(str(out_path) + ".spk.part")
     p = pyaudio.PyAudio()
     started_at = time.time()
 
@@ -177,8 +192,8 @@ def record(out_path: Path, stop_event: threading.Event | None = None,
         print(f"  speakers -> {loopback_dev['name']}")
         print(f"  mic      -> {mic_dev['name']}")
 
-        mic_rec = _StreamRecorder(p, mic_dev, stop_event)
-        spk_rec = _StreamRecorder(p, loopback_dev, stop_event)
+        mic_rec = _StreamRecorder(p, mic_dev, stop_event, pause_event, mic_part)
+        spk_rec = _StreamRecorder(p, loopback_dev, stop_event, pause_event, spk_part)
         mic_rec.start()
         spk_rec.start()
 
@@ -193,8 +208,15 @@ def record(out_path: Path, stop_event: threading.Event | None = None,
 
         mic = mic_rec.collect()
         spk = spk_rec.collect()
+        for rec, label in ((mic_rec, "mic"), (spk_rec, "speakers")):
+            if rec.error:
+                log.warning("%s stream failed (%s); keeping what was captured.",
+                            label, rec.error)
     finally:
         p.terminate()
+
+    if len(mic) == 0 and len(spk) == 0:
+        raise (mic_rec.error or spk_rec.error or RuntimeError("No audio captured."))
 
     # Pad the shorter stream so the two channels stay time-aligned.
     n = max(len(mic), len(spk))
@@ -205,12 +227,13 @@ def record(out_path: Path, stop_event: threading.Event | None = None,
     stereo = np.clip(stereo, -1.0, 1.0)
     pcm = (stereo * 32767).astype(np.int16)
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(out_path), "wb") as wf:
         wf.setnchannels(2)
         wf.setsampwidth(2)
         wf.setframerate(TARGET_RATE)
         wf.writeframes(pcm.tobytes())
+    mic_part.unlink(missing_ok=True)
+    spk_part.unlink(missing_ok=True)
 
     duration = n / TARGET_RATE
     log.info("recording finished: %.1f min -> %s", duration / 60, out_path)

@@ -117,11 +117,19 @@ Notes for ARM:
 
 They're the same thing. `Scribe App.bat` (or `scribe.bat serve --open`)
 starts a small LAN server and opens the page in an app window on the PC —
-one button to start and stop, an elapsed counter, a status lamp in the
-Pocket's own LED colors, a transcripts tab (read/copy/download) and a
-recordings tab (play/download the audio), a "Pull from Pocket" button, a
-settings panel, and a dark/light toggle that follows the OS until you
-override it.
+start/pause/stop controls, an elapsed counter that freezes while paused, a
+status lamp in the Pocket's own LED colors, a transcripts tab
+(read/copy/download) and a recordings tab (play/download/transcribe), a
+"Pull from Pocket" button, a settings panel, and a dark/light toggle that
+follows the OS until you override it.
+
+Capture and transcription are separate steps. Audio streams to disk while
+you record — a crash loses seconds, not the meeting — and the WAV lands in
+the Recordings tab the moment you press Stop, whether or not it ever gets
+transcribed. By default transcription starts automatically after Stop
+(watch the lamp breathe blue); turn that off in Settings and use each
+recording's **Transcribe** button when you're ready. Either way you can
+start the next recording while the last one is still transcribing.
 
 Settings covers: which microphone to record from (the speakers side always
 follows the system default output), where recordings are saved (default:
