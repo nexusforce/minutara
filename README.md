@@ -1,2 +1,137 @@
-# scribe
-Audio Transcriber
+# Scribe
+
+Local-first meeting capture and transcription for Windows. A Granola
+replacement that runs on your own machine, treats a [Pocket](https://heypocket.com)
+device as a second input, and sends nothing to anyone's servers unless you
+switch it on.
+
+```
+  Zoom/Teams on your PC ──► WASAPI loopback + mic ──┐
+                                                    ├─► local Whisper ─► transcripts/*.txt
+  Pocket device ──► USB-C (plain drive) ────────────┘
+                                                    ⋯► Pocket cloud (off by default)
+
+  Phone ──► http://<laptop>:8765 ──► start / stop / read
+```
+
+## Why it exists
+
+Meeting note-takers either charge a subscription (Granola, $14/mo), put a bot
+in your call, or route your conversations through their cloud. Scribe does
+none of that:
+
+- **Capture is local.** Windows WASAPI loopback records what your speakers
+  play; your mic is recorded separately. No bot joins, nobody is notified,
+  nothing leaves the machine.
+- **Transcription is local.** [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+  runs on your CPU (or GPU). The model lives in a folder next to the app.
+- **Speaker attribution is free.** Mic and loopback are kept as separate
+  channels of one stereo WAV — left is you, right is everyone else — and each
+  channel is transcribed independently. The you-vs-them split comes from the
+  wiring, not from a diarization model guessing.
+- **The Pocket is treated as a drive.** With USB Mode on, the device mounts
+  as a `POCKET` volume with a `RECORD` folder. Scribe copies new files off it
+  and transcribes them locally. In-person meetings and Zoom calls end up in
+  the same `transcripts/` folder.
+
+Transcripts are plain `.txt` — paste them into whatever LLM you like, or
+point your notes system at the folder.
+
+## Quick start (from a clone)
+
+```powershell
+git clone https://github.com/nexusforce/scribe
+cd scribe
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+copy config.example.json config.json
+
+scribe.bat record --title "Board sync"    # capture a Zoom/Teams call, Ctrl+C to stop
+scribe.bat from-usb                       # pull new recordings off the Pocket
+scribe.bat serve                          # phone remote (URL + QR printed)
+scribe.bat config                         # show toggles and whether the drive is connected
+```
+
+First transcription downloads the Whisper model (~500 MB for `small.en`).
+
+## Portable build (run from a USB stick)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Scribe
+```
+
+Run once on a machine with internet; the stick works offline afterward. It
+bundles embeddable Python, all dependencies, the app, and a pre-baked Whisper
+model (~2 GB total). Nothing is installed on the host, no admin needed, and
+all data — recordings, transcripts, config — stays on the stick.
+
+Realities of stick life: use USB 3.0 (the model is read on every run),
+SmartScreen may grumble at an unsigned interpreter on removable media, and a
+locked-down work laptop with application allowlisting may refuse to run it at
+all.
+
+## The phone remote
+
+`scribe.bat serve` starts a small LAN server and prints a URL and QR code.
+Open it on your phone and add it to the home screen: one button to start and
+stop, an elapsed counter, a status lamp in the Pocket's own LED colors, your
+recent transcripts, and a "Pull from Pocket" button.
+
+- Phone and laptop must share a network. Corporate/guest Wi-Fi with client
+  isolation blocks this; a phone hotspot is the fallback.
+- Auth is a token in the URL, generated on first run into `config.json`.
+  Plain HTTP — treat it as LAN-only and never port-forward it.
+- Allow the Windows Firewall prompt on **Private** networks only.
+
+## Configuration
+
+Copy `config.example.json` to `config.json`. Everything cloud-facing defaults
+to **off**:
+
+| Setting | On means |
+|---|---|
+| `use_pocket_api` | Master switch for anything network-facing |
+| `push_to_pocket` | Upload PC-captured audio into your Pocket account |
+| `prefer_pocket_transcripts` | Use Pocket's transcription instead of local Whisper |
+| `delete_from_device` | Remove files from the device after a verified copy |
+
+`config.json` is gitignored because it holds your Pocket API key and the
+remote's auth token. Don't commit it.
+
+For the Pocket API, use a **personal** key (`pk_...` from Settings →
+Developer → API Keys) — organization keys are rejected by the upload endpoint.
+
+## Commands
+
+| Command | Does |
+|---|---|
+| `record --title "..."` | Capture system audio + mic until Ctrl+C, then transcribe |
+| `from-usb [--watch]` | Copy new recordings off the Pocket drive and transcribe |
+| `pull [--days N] [--id X]` | Fetch from Pocket's cloud API (requires the toggle) |
+| `transcribe <file>` | Transcribe any audio file you already have |
+| `serve [--port N]` | Start the phone remote |
+| `config` | Show current settings and device status |
+
+## Known unknowns
+
+Marked `UNVERIFIED` in the source, in honesty rather than confidence:
+
+- **File layout inside the Pocket's `RECORD` folder** — drive and folder names
+  are documented; file naming and audio container are not. `AUDIO_SUFFIXES`
+  in `scribe/usb_ingest.py` casts a wide net; narrow it after one look at the
+  real drive. Most likely thing to need a fix.
+- **Pocket API response shapes** — the docs render every example payload as
+  `null`, so field names are inferred. Print one raw response and correct.
+- Enabling USB Mode requires the Pocket phone app, and opening the app can
+  trigger cloud sync of unsynced recordings. Test the loop with a throwaway
+  recording before a real meeting.
+
+## Consent
+
+Scribe records conversations without notifying participants — that's the
+point of bot-free capture, and it's also a legal question that varies by
+jurisdiction. Recording-consent laws are on you, not the tool.
+
+## License
+
+MIT

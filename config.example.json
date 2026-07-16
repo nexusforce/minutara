@@ -1,0 +1,14 @@
+{
+  "use_pocket_api": false,
+  "push_to_pocket": false,
+  "prefer_pocket_transcripts": false,
+  "pocket_api_key": "",
+  "whisper_model": "small.en",
+  "whisper_device": "cpu",
+  "me_label": "Me",
+  "them_label": "Them",
+  "usb_volume_label": "POCKET",
+  "usb_record_dir": "RECORD",
+  "delete_from_device": false,
+  "server_port": 8765
+}

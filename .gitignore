@@ -1,0 +1,21 @@
+# Secrets — config.json contains your Pocket API key and the remote's auth token
+config.json
+
+# Local data
+recordings/
+transcripts/
+models/
+ingested.json
+
+# Portable build output
+dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+Thumbs.db
+.DS_Store
