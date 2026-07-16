@@ -263,6 +263,25 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             return jsonify({"error": "No transcript by that name."}), 404
         return Response(f.read_text(encoding="utf-8"), mimetype="text/plain")
 
+    @app.get("/api/phone")
+    def phone():
+        """The LAN URL for the phone remote, plus a QR of it as inline SVG."""
+        lan_url = f"http://{local_ip()}:{cfg.server_port}/?token={cfg.server_token}"
+        svg = ""
+        try:
+            import io
+            import qrcode
+            import qrcode.image.svg
+            img = qrcode.make(lan_url, image_factory=qrcode.image.svg.SvgPathImage,
+                              border=2)
+            buf = io.BytesIO()
+            img.save(buf)
+            svg = buf.getvalue().decode("utf-8")
+            svg = svg[svg.index("<svg"):]  # drop the XML declaration for innerHTML
+        except Exception as e:
+            log.warning("QR unavailable (%s) — showing the URL only", e)
+        return jsonify({"url": lan_url, "svg": svg})
+
     @app.get("/api/log")
     def log_tail():
         if not LOG_PATH.exists():
@@ -539,6 +558,7 @@ PAGE = r"""<!doctype html>
     margin:0; font:400 13px/1.7 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere;
   }
   .sheet audio { width:100%; }
+  #p-qr svg { display:block; width:100%; height:auto; }
   .sheet .tools { display:flex; gap:8px; margin-left:auto; }
   .tool {
     background:transparent; border:1px solid var(--edge); border-radius:8px;
@@ -682,8 +702,29 @@ PAGE = r"""<!doctype html>
       <div class="hint" id="s-port"></div>
       <button class="save" id="s-save">Save</button>
       <div class="row" style="margin-top:14px; margin-bottom:0;">
+        <button class="ghost" id="s-phone">Link phone</button>
         <button class="ghost" id="s-viewlog">View log</button>
         <button class="ghost" id="s-quit">Quit Scribe</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Link your phone: QR + URL for the remote -->
+<div class="overlay" id="phone" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Link your phone" style="max-width:380px;">
+    <header style="display:flex;align-items:center;gap:12px;">
+      <span class="name">Link your phone</span>
+      <span class="tools"><button class="tool" id="p-close">Close</button></span>
+    </header>
+    <div class="body" style="text-align:center;">
+      <div id="p-qr" style="background:#fff; border-radius:12px; padding:14px; max-width:280px; margin:0 auto;"></div>
+      <div id="p-url" style="font:400 12px/1.6 var(--mono); overflow-wrap:anywhere;
+                              color:var(--dim); margin-top:14px; user-select:all;"></div>
+      <div class="hint" style="margin-top:10px;">
+        Scan with the phone's camera (same Wi-Fi), then add the page to your
+        home screen. The link includes your access token — share it with
+        nobody but your own phone.
       </div>
     </div>
   </div>
@@ -865,6 +906,15 @@ $("s-save").onclick = async () => {
   if (tab === "recordings") loadList();
 };
 
+$("s-phone").onclick = async () => {
+  const d = await (await api("/api/phone")).json();
+  $("settings").hidden = true;
+  $("p-url").textContent = d.url;
+  $("p-qr").innerHTML = d.svg || "";
+  $("p-qr").style.display = d.svg ? "" : "none";
+  $("phone").hidden = false;
+};
+
 $("s-viewlog").onclick = async () => {
   const r = await api("/api/log");
   $("settings").hidden = true;
@@ -887,13 +937,14 @@ $("s-quit").onclick = async () => {
 };
 
 // --- overlays: backdrop click + Escape close ----------------------------
-for (const id of ["viewer", "settings"]) {
+for (const id of ["viewer", "settings", "phone"]) {
   $(id).addEventListener("click", e => { if (e.target === $(id)) $(id).hidden = true; });
 }
 $("v-close").onclick = () => { const a = $("v-audio"); a.pause(); $("viewer").hidden = true; };
 $("s-close").onclick = () => $("settings").hidden = true;
+$("p-close").onclick = () => $("phone").hidden = true;
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") { $("v-audio").pause(); $("viewer").hidden = true; $("settings").hidden = true; }
+  if (e.key === "Escape") { $("v-audio").pause(); $("viewer").hidden = true; $("settings").hidden = true; $("phone").hidden = true; }
 });
 
 // --- misc --------------------------------------------------------------

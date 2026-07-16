@@ -127,14 +127,14 @@ Settings covers: which microphone to record from (the speakers side always
 follows the system default output), where recordings are saved (default:
 `recordings` in the app folder), Whisper model, speaker labels, the Pocket
 cloud toggles, and the API key — no JSON editing. The panel also has
-**View log** (the same `scribe.log` the engine writes — start there when
-something looks stuck) and **Quit Scribe**, which stops the background
-engine.
+**Link phone** (a QR code your phone scans to open the remote), **View log**
+(the same `scribe.log` the engine writes — start there when something looks
+stuck) and **Quit Scribe**, which stops the background engine.
 
-The LAN URL and QR code are printed to the console (and the log): open that
-on your phone (same Wi-Fi) and add it to the home screen, and the identical
-page is your remote. Double-clicking the launcher while Scribe is already
-running doesn't start a second copy — it just reopens the window.
+Scan the Link-phone QR on the same Wi-Fi and add the page to the home
+screen, and the identical page is your remote. Double-clicking the launcher
+while Scribe is already running doesn't start a second copy — it just
+reopens the window.
 
 - Phone and laptop must share a network. Corporate/guest Wi-Fi with client
   isolation blocks this; a phone hotspot is the fallback.
