@@ -12,6 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import Config
+from .log import get
+
+log = get("scribe.pipeline")
 
 
 def slug(s: str) -> str:
@@ -41,6 +44,8 @@ def process(
 
     text = ""
 
+    log.info("processing %s (title=%r)", audio_path.name, title)
+
     if cfg.prefer_pocket_transcripts and cfg.pocket_enabled:
         # Opt-in: let Pocket transcribe instead of doing it locally. Costs you
         # the free channel-based speaker split and sends audio to their
@@ -48,6 +53,7 @@ def process(
         try:
             text = _pocket_transcribe(audio_path, cfg, title, duration_s, recorded_at)
         except Exception as e:
+            log.warning("Pocket transcription failed (%s); falling back to local Whisper.", e)
             print(f"Pocket transcription failed ({e}). Falling back to local Whisper.")
 
     if not text:
@@ -62,11 +68,14 @@ def process(
 
     out = cfg.transcripts_dir / f"{name}.txt"
     out.write_text(text, encoding="utf-8")
+    log.info("transcript saved: %s", out.name)
 
     if cfg.push_to_pocket and cfg.pocket_enabled and not cfg.prefer_pocket_transcripts:
         try:
             _pocket_push(audio_path, cfg, title, duration_s, recorded_at)
+            log.info("pushed %s to Pocket", audio_path.name)
         except Exception as e:
+            log.warning("Pocket upload failed (%s); transcript is saved locally regardless.", e)
             print(f"Pocket upload failed ({e}). Transcript is saved locally regardless.")
 
     return out

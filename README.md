@@ -48,9 +48,10 @@ copy config.example.json config.json
 ```
 
 Then **double-click `Scribe App.bat`** — the GUI opens in its own window
-(record, read transcripts, pull from the Pocket, settings, dark/light
-toggle). The console window that comes with it is the engine; closing it
-stops Scribe.
+(record, play recordings, read transcripts, pull from the Pocket, settings,
+dark/light toggle). The engine runs windowless in the background and logs to
+`scribe.log`; quit it from the ⚙ settings panel. If you want a visible
+console instead, run `scribe.bat serve --open`.
 
 The same things are available as commands, if you prefer a terminal:
 
@@ -117,13 +118,23 @@ Notes for ARM:
 They're the same thing. `Scribe App.bat` (or `scribe.bat serve --open`)
 starts a small LAN server and opens the page in an app window on the PC —
 one button to start and stop, an elapsed counter, a status lamp in the
-Pocket's own LED colors, a transcript reader with copy/download, a
-"Pull from Pocket" button, a settings panel (Whisper model, speaker labels,
-cloud toggles, API key — no JSON editing), and a dark/light toggle that
-follows the OS until you override it.
+Pocket's own LED colors, a transcripts tab (read/copy/download) and a
+recordings tab (play/download the audio), a "Pull from Pocket" button, a
+settings panel, and a dark/light toggle that follows the OS until you
+override it.
 
-The server also prints a URL and QR code: open that on your phone (same
-Wi-Fi) and add it to the home screen, and the identical page is your remote.
+Settings covers: which microphone to record from (the speakers side always
+follows the system default output), where recordings are saved (default:
+`downloads` in the app folder), Whisper model, speaker labels, the Pocket
+cloud toggles, and the API key — no JSON editing. The panel also has
+**View log** (the same `scribe.log` the engine writes — start there when
+something looks stuck) and **Quit Scribe**, which stops the background
+engine.
+
+The LAN URL and QR code are printed to the console (and the log): open that
+on your phone (same Wi-Fi) and add it to the home screen, and the identical
+page is your remote. Double-clicking the launcher while Scribe is already
+running doesn't start a second copy — it just reopens the window.
 
 - Phone and laptop must share a network. Corporate/guest Wi-Fi with client
   isolation blocks this; a phone hotspot is the fallback.

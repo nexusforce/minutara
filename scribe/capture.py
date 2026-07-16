@@ -25,6 +25,10 @@ from pathlib import Path
 import numpy as np
 import pyaudiowpatch as pyaudio
 
+from .log import get
+
+log = get("scribe.capture")
+
 TARGET_RATE = 16000  # what Whisper wants; we resample down to this
 CHUNK = 1024
 
@@ -55,6 +59,44 @@ def _find_loopback(p: pyaudio.PyAudio) -> dict:
         f"No loopback device found for output {default_out['name']!r}. "
         "Check that audio is actually playing through it."
     )
+
+
+def _pick_mic(p: pyaudio.PyAudio, name: str) -> dict:
+    """The configured mic if it can be found by name, else the system default."""
+    if name:
+        want = name.lower()
+        for i in range(p.get_device_count()):
+            d = p.get_device_info_by_index(i)
+            if (int(d.get("maxInputChannels", 0)) > 0
+                    and not d.get("isLoopbackDevice")
+                    and want in str(d["name"]).lower()):
+                return d
+        log.warning("Configured mic %r not found; using the system default.", name)
+    return p.get_default_input_device_info()
+
+
+def list_input_devices() -> dict:
+    """Device names for the settings UI. Windows-only, like the rest of capture."""
+    p = pyaudio.PyAudio()
+    try:
+        mics, default, loopback = [], "", ""
+        try:
+            default = str(p.get_default_input_device_info()["name"])
+        except OSError:
+            pass
+        for i in range(p.get_device_count()):
+            d = p.get_device_info_by_index(i)
+            if int(d.get("maxInputChannels", 0)) > 0 and not d.get("isLoopbackDevice"):
+                name = str(d["name"])
+                if name not in mics:
+                    mics.append(name)
+        try:
+            loopback = str(_find_loopback(p)["name"])
+        except Exception:
+            pass
+        return {"mics": mics, "default": default, "loopback": loopback}
+    finally:
+        p.terminate()
 
 
 def _resample_mono(data: np.ndarray, src_rate: int, src_channels: int) -> np.ndarray:
@@ -111,9 +153,11 @@ class _StreamRecorder(threading.Thread):
         return np.concatenate(self.frames)
 
 
-def record(out_path: Path, stop_event: threading.Event | None = None) -> CaptureResult:
+def record(out_path: Path, stop_event: threading.Event | None = None,
+           mic_name: str = "") -> CaptureResult:
     """
     Record until stop_event is set (or Ctrl+C). Writes a 16kHz stereo WAV.
+    mic_name picks a specific microphone by (partial) name; "" = default.
 
     Usage:
         stop = threading.Event()
@@ -126,8 +170,10 @@ def record(out_path: Path, stop_event: threading.Event | None = None) -> Capture
 
     try:
         loopback_dev = _find_loopback(p)
-        mic_dev = p.get_default_input_device_info()
+        mic_dev = _pick_mic(p, mic_name)
 
+        log.info("recording: mic=%r speakers=%r -> %s",
+                 mic_dev["name"], loopback_dev["name"], out_path.name)
         print(f"  speakers -> {loopback_dev['name']}")
         print(f"  mic      -> {mic_dev['name']}")
 
@@ -167,4 +213,5 @@ def record(out_path: Path, stop_event: threading.Event | None = None) -> Capture
         wf.writeframes(pcm.tobytes())
 
     duration = n / TARGET_RATE
+    log.info("recording finished: %.1f min -> %s", duration / 60, out_path)
     return CaptureResult(path=out_path, duration_s=duration, started_at=started_at)

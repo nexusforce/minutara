@@ -49,6 +49,9 @@ class Config:
     me_label: str = "Me"
     them_label: str = "Them"
 
+    # --- Capture ---
+    mic_device: str = ""               # substring of a mic name; "" = system default
+
     # --- USB ingest ---
     usb_volume_label: str = "POCKET"
     usb_record_dir: str = "RECORD"
@@ -59,7 +62,9 @@ class Config:
     server_token: str = ""             # generated on first run
 
     # --- Paths (all under APP_ROOT so the stick stays self-contained) ---
-    recordings_dir: Path = field(default_factory=lambda: APP_ROOT / "recordings")
+    # recordings_dir is user-configurable (Settings in the GUI, or
+    # "recordings_dir" in config.json — relative paths resolve under APP_ROOT).
+    recordings_dir: Path = field(default_factory=lambda: APP_ROOT / "downloads")
     transcripts_dir: Path = field(default_factory=lambda: APP_ROOT / "transcripts")
     model_dir: Path = field(default_factory=lambda: APP_ROOT / "models")
     manifest_path: Path = field(default_factory=lambda: APP_ROOT / "ingested.json")
@@ -83,6 +88,12 @@ def _coerce(value, default):
     return value
 
 
+def resolve_dir(value) -> Path:
+    """A user-supplied folder: absolute stays put, relative goes under the app."""
+    p = Path(str(value)).expanduser()
+    return p if p.is_absolute() else APP_ROOT / p
+
+
 def load() -> Config:
     cfg = Config()
 
@@ -96,7 +107,7 @@ def load() -> Config:
     for key in (
         "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
         "pocket_api_key", "whisper_model", "whisper_device", "me_label",
-        "them_label", "usb_volume_label", "usb_record_dir",
+        "them_label", "mic_device", "usb_volume_label", "usb_record_dir",
         "delete_from_device", "server_port", "server_token",
     ):
         default = getattr(cfg, key)
@@ -105,6 +116,12 @@ def load() -> Config:
         env = os.environ.get(f"SCRIBE_{key.upper()}")
         if env is not None:
             setattr(cfg, key, _coerce(env, default))
+
+    if "recordings_dir" in file_data:
+        cfg.recordings_dir = resolve_dir(file_data["recordings_dir"])
+    env_dir = os.environ.get("SCRIBE_RECORDINGS_DIR")
+    if env_dir:
+        cfg.recordings_dir = resolve_dir(env_dir)
 
     # POCKET_API_KEY is the conventional name; honour it too.
     if not cfg.pocket_api_key:
@@ -134,6 +151,8 @@ def save(cfg: Config) -> None:
         "whisper_device": cfg.whisper_device,
         "me_label": cfg.me_label,
         "them_label": cfg.them_label,
+        "mic_device": cfg.mic_device,
+        "recordings_dir": str(cfg.recordings_dir),
         "usb_volume_label": cfg.usb_volume_label,
         "usb_record_dir": cfg.usb_record_dir,
         "delete_from_device": cfg.delete_from_device,

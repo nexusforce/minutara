@@ -75,9 +75,17 @@ set PYTHONPATH=%~dp0lib;%~dp0
 
 @"
 @echo off
+setlocal
 cd /d "%~dp0"
-call scribe.bat serve --open
-if errorlevel 1 pause
+set "HF_HOME=%~dp0models"
+set "XDG_CACHE_HOME=%~dp0models"
+set "PYTHONPATH=%~dp0lib;%~dp0"
+if exist "%~dp0python\pythonw.exe" (
+  start "" "%~dp0python\pythonw.exe" -m scribe.main serve --open
+) else (
+  "%~dp0python\python.exe" -m scribe.main serve --open
+  if errorlevel 1 pause
+)
 "@ | Set-Content "$Target\Scribe App.bat" -Encoding ASCII
 
 @"
