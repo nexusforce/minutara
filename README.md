@@ -70,6 +70,29 @@ SmartScreen may grumble at an unsigned interpreter on removable media, and a
 locked-down work laptop with application allowlisting may refuse to run it at
 all.
 
+## Windows on ARM (Snapdragon laptops)
+
+Run the **x64 build under emulation** — don't try a native ARM64 install.
+Two load-bearing dependencies, `PyAudioWPatch` (WASAPI capture) and
+`ctranslate2` (faster-whisper's engine), publish no `win_arm64` wheels, so a
+native ARM64 Python cannot record or transcribe. The portable build already
+downloads x64 embeddable Python, and Windows 11 on ARM runs it transparently
+through the Prism emulator — including on the machine doing the build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Scribe
+```
+
+Notes for ARM:
+
+- **Windows 11 is required** (its x64 emulation covers everything here);
+  24H2 or later is noticeably faster because Prism adds AVX/AVX2 support,
+  which faster-whisper uses heavily.
+- **Transcription pays an emulation tax.** If `small.en` feels slow, build
+  with `-Model base.en` (or set `"whisper_model": "base.en"` in config.json)
+  and step back up if quality allows.
+- Recording and the phone remote are I/O-bound and run fine under emulation.
+
 ## The phone remote
 
 `scribe.bat serve` starts a small LAN server and prints a URL and QR code.
