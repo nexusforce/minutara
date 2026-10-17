@@ -118,6 +118,7 @@ class Config:
 
     # --- Capture ---
     mic_device: str = ""               # substring of a mic name; "" = system default
+    speaker_device: str = ""           # output to capture "their" side from; "" = Windows default
     auto_transcribe: bool = True       # transcribe automatically when a recording stops
 
     # --- USB ingest ---
@@ -142,6 +143,7 @@ class Config:
     model_dir: Path = field(default_factory=lambda: APP_ROOT / "models")
     manifest_path: Path = field(default_factory=lambda: APP_ROOT / "ingested.json")
     archive_dir: Path = field(default_factory=lambda: APP_ROOT / "granola_archive")
+    cache_dir: Path = field(default_factory=lambda: APP_ROOT / "cache")
 
     def ensure_dirs(self) -> None:
         for d in (self.recordings_dir, self.transcripts_dir, self.notes_dir,
@@ -160,7 +162,7 @@ class Config:
 FLAT_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "pocket_base_url", "whisper_model", "whisper_device",
-    "me_label", "them_label", "mic_device", "auto_transcribe",
+    "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
     "usb_volume_label", "usb_record_dir",
     "delete_from_device", "server_port", "server_token",
 )

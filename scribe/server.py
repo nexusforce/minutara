@@ -270,6 +270,7 @@ class Recorder:
         wav = self.cfg.recordings_dir / f"{note_id}.wav"
         try:
             result = record(wav, self.stop_event, mic_name=self.cfg.mic_device,
+                            speaker_name=self.cfg.speaker_device,
                             pause_event=self.pause_event)
             # The audio is safe on disk from here on, whatever happens next.
             notes.update(self.cfg, note_id, duration_s=round(result.duration_s, 1),
@@ -323,7 +324,7 @@ def local_ip() -> str:
 EDITABLE_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "whisper_model", "whisper_device",
-    "me_label", "them_label", "mic_device", "auto_transcribe",
+    "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
     "delete_from_device", "pocket_base_url", "usb_volume_label", "usb_record_dir",
 )
 
@@ -518,6 +519,8 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         if name and (name == t["name"] or name in t["pending"]):
             return fail(409, "Wait for the transcription to finish first.")
         notes.delete(cfg, note_id)
+        from .listen import forget
+        forget(cfg.cache_dir, note_id)
         return jsonify({"ok": True})
 
     @app.post("/api/notes/<note_id>/transcribe")
@@ -541,9 +544,17 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         audio = notes.audio_path(cfg, n) if n else None
         if not audio or not audio.exists():
             return fail(404, "No recording.")
+        download = bool(request.args.get("download"))
+        original = audio.name
+        if not download and not (note_id == rec.note_id and rec.state in LIVE_STATES):
+            # The player gets a listening copy at a normal volume; downloads
+            # (and transcription) use the recording exactly as captured.
+            from .listen import listening_copy
+            audio = listening_copy(audio, cfg.cache_dir)
         # conditional=True gives Range support, which <audio> needs to seek.
         return send_from_directory(audio.parent, audio.name, conditional=True,
-                                   as_attachment=bool(request.args.get("download")))
+                                   as_attachment=download,
+                                   download_name=original)
 
     @app.get("/api/notes/<note_id>/transcript")
     def note_transcript(note_id: str):
@@ -581,6 +592,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             "me_label": cfg.me_label,
             "them_label": cfg.them_label,
             "mic_device": cfg.mic_device,
+            "speaker_device": cfg.speaker_device,
             "auto_transcribe": cfg.auto_transcribe,
             "recordings_dir": str(cfg.recordings_dir),
             "use_pocket_api": cfg.use_pocket_api,
@@ -641,6 +653,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         except Exception as e:
             info = {"mics": [], "default": "", "loopback": "", "error": str(e)}
         info["selected"] = cfg.mic_device
+        info["selected_speaker"] = cfg.speaker_device
         return jsonify(info)
 
     @app.post("/api/devices/test")
@@ -651,6 +664,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         data = request.get_json(silent=True) or {}
         kind = "speakers" if data.get("kind") == "speakers" else "mic"
         mic = str(data.get("mic", cfg.mic_device) or "")
+        speaker = str(data.get("speaker", cfg.speaker_device) or "")
         try:
             seconds = float(data.get("seconds") or 4)
         except (TypeError, ValueError):
@@ -659,7 +673,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             return fail(409, "A test is already running.")
         try:
             from .capture import test_device
-            result = test_device(kind, mic, seconds)
+            result = test_device(kind, mic, seconds, speaker_name=speaker)
         except Exception as e:
             log.exception("%s test failed", kind)
             return fail(500, f"Test failed: {e}")

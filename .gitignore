@@ -10,6 +10,7 @@ models/
 ingested.json
 granola_archive/
 webview_data/
+cache/
 scribe.log*
 
 # Portable build output
