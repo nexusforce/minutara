@@ -1,11 +1,14 @@
 # Secrets — config.json contains your Pocket API key and the remote's auth token
 config.json
+granola_auth.json
 
 # Local data
 recordings/
 transcripts/
+notes/
 models/
 ingested.json
+granola_archive/
 scribe.log*
 
 # Portable build output

@@ -86,7 +86,7 @@ def cmd_pull(args, cfg) -> None:
 
     from .pocket_client import PocketClient
 
-    client = PocketClient(cfg.pocket_api_key)
+    client = PocketClient(cfg.pocket_api_key, base_url=cfg.pocket_base_url)
 
     if args.id:
         details = client.get_recording(args.id)

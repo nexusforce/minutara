@@ -47,11 +47,10 @@ python -m venv .venv
 copy config.example.json config.json
 ```
 
-Then **double-click `Scribe App.bat`** — the GUI opens in its own window
-(record, play recordings, read transcripts, pull from the Pocket, settings,
-dark/light toggle). The engine runs windowless in the background and logs to
-`scribe.log`; quit it from the ⚙ settings panel. If you want a visible
-console instead, run `scribe.bat serve --open`.
+Then **double-click `Scribe App.bat`** — the app opens in its own window.
+The engine runs windowless in the background and logs to `scribe.log`; quit
+it from Settings → Quit. If you want a visible console instead, run
+`scribe.bat serve --open`.
 
 The same things are available as commands, if you prefer a terminal:
 
@@ -113,28 +112,119 @@ Notes for ARM:
   and step back up if quality allows.
 - Recording and the phone remote are I/O-bound and run fine under emulation.
 
-## The GUI and the phone remote
+## The app
 
-They're the same thing. `Scribe App.bat` (or `scribe.bat serve --open`)
-starts a small LAN server and opens the page in an app window on the PC —
-one button to start and stop, an elapsed counter, a status lamp in the
-Pocket's own LED colors, a transcripts tab (read/copy/download) and a
-recordings tab (play/download the audio), a "Pull from Pocket" button, a
-settings panel, and a dark/light toggle that follows the OS until you
-override it.
+Laid out like Granola: every meeting is a **note**. The sidebar has search
+(Ctrl+K, covers titles, your notes and transcripts), Home, and your folders.
+Home shows today's date and a **Start recording** card, then your meetings
+grouped by day, each labelled when it's still recording, transcribing, or
+not transcribed yet. **New note** (top right) starts recording straight
+away; the ↓ button pulls new recordings off your Pocket.
 
-Settings covers: which microphone to record from (the speakers side always
-follows the system default output), where recordings are saved (default:
-`recordings` in the app folder), Whisper model, speaker labels, the Pocket
-cloud toggles, and the API key — no JSON editing. The panel also has
-**View log** (the same `scribe.log` the engine writes — start there when
-something looks stuck) and **Quit Scribe**, which stops the background
-engine.
+A note has a title, chips for date, length, source and folder, and three tabs:
 
-The LAN URL and QR code are printed to the console (and the log): open that
-on your phone (same Wi-Fi) and add it to the home screen, and the identical
-page is your remote. Double-clicking the launcher while Scribe is already
-running doesn't start a second copy — it just reopens the window.
+- **AI notes** — Granola-style "enhanced" notes: topics, decisions and next
+  steps written from the transcript and your rough notes (see below).
+- **My notes** — type while the meeting runs; it saves as you go.
+- **Transcript** — drawn as a conversation, you on the right and them on
+  the left (the stereo recording knows who said what). Click any timestamp
+  to play the recording from that moment.
+
+The pill at the bottom works like Granola's: pause, resume and stop while
+recording, then a player once the audio is saved. The **…** menu downloads
+the recording or transcript, re-runs transcription, or deletes the note.
+
+Capture and transcription are separate steps. Audio streams to disk while
+you record — a crash loses seconds, not the meeting — and the note has its
+recording the moment you press Stop, whether or not it's ever transcribed.
+By default transcription starts automatically (the lamp breathes blue);
+turn that off in Settings and press **Transcribe** on the note when you're
+ready. You can start the next recording while the last one transcribes.
+
+**Settings** is a single preferences page: auto-transcribe, theme
+(System/Light/Dark), microphone, recordings folder, speech model, speaker
+names, the Pocket options and API key, plus **Link your phone**, the
+activity log and Quit.
+
+Files that were already in `recordings/` or `transcripts/` (from the CLI,
+the Pocket, or older versions of Scribe) show up as notes automatically.
+Each note is a small JSON file in `notes/`; audio and transcripts stay where
+they always were.
+
+What Scribe deliberately doesn't copy from Granola: calendar sync, sharing
+and billing.
+
+## AI notes and Ask
+
+Off until you pick a provider in **Settings → AI notes & Ask**:
+
+| Provider | Where your transcript goes | Notes |
+|---|---|---|
+| Claude (Anthropic) | Anthropic | Official SDK. Default model `claude-opus-5-5`, effort `medium`, automatic refusal fallback |
+| OpenAI | OpenAI | Official SDK, Responses API (Chat Completions selectable) |
+| Google Gemini | Google | REST; default model `gemini-flash-latest`, which tracks Google's newest Flash |
+| Ollama | **Nowhere** — runs on this computer | Install Ollama, `ollama pull llama3.2:3b` (or any model), pick it in Settings |
+| OpenAI-compatible | The server you set | LM Studio, OpenRouter, vLLM, gateways… |
+
+Each provider keeps its own key, model and limits, so switching doesn't lose
+anything. **Fetch models** lists what your key can actually use and **Test**
+sends a one-line message, so a renamed model shows up immediately rather than
+mid-meeting. Keys can also come from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or
+`GEMINI_API_KEY`.
+
+With a provider on, AI notes are written automatically after each transcript
+(or press **Generate** on a note), and an **Ask anything** box appears at the
+bottom of Home and of every note — like Granola's. On a note it answers about
+that meeting (try "Write follow-up email"); on Home it reads your recent
+meetings plus any that match the question, and links the ones it used.
+
+Meetings longer than a model can read at once (small local models,
+especially) are summarized in parts and then combined — never silently cut.
+Both prompts are editable under **Prompts**; leave them blank to keep
+Scribe's built-in ones.
+
+Everything that talks to the outside world — addresses, model names, API
+style, output-limit parameter, timeouts, input budgets, Ollama's context
+window — is a setting (Settings → Advanced, or the `ai` section of
+`config.json`), so a provider changing its API is a settings change, not a
+code change.
+
+## Moving from Granola
+
+**Settings → Import from Granola** copies your history into Scribe so nothing
+is lost when you cancel: titles, dates, attendees, folders, Granola's AI
+notes, your own typed notes and full transcripts (Granola keeps no audio, so
+there's none to copy).
+
+- **Sign in with Granola** (default) uses Granola's official MCP server: a
+  browser window opens, you approve, and the import starts by itself. Works on
+  Granola's paid plans. Do this on the computer running Scribe.
+- **Granola API key** uses Granola's Personal API (`grn_…` keys need a
+  Business or Enterprise plan).
+
+Pick "Ones I recorded or attended" or "Everything I can see", and a start
+date. Running the import again only adds new meetings, so an interrupted
+import just continues; **Re-import** refreshes everything but keeps notes
+you've typed in Scribe. Meetings whose transcript Granola won't release are
+still imported, with the reason listed. Granola's raw responses are also kept
+in `granola_archive/`, so even fields Scribe doesn't show are preserved.
+
+## Pocket
+
+The ↓ button on Home (or **Settings → Pocket → Pull recordings**) copies new
+recordings off the Pocket over USB-C — turn on USB Mode in the Pocket app
+first. Settings shows whether the drive is connected, and lets you change the
+drive name and folder if Pocket ever renames them. With **Pocket cloud** on
+and your key added, **Import from Pocket's cloud** downloads recordings from
+your Pocket account too; the API address is a setting as well.
+
+## The phone remote
+
+Settings → **Link your phone** (or the phone icon in the sidebar) shows a QR
+code. Scan it on the same Wi-Fi and add the page to your home screen: it's
+the same app, laid out for a phone. Double-clicking the launcher while
+Scribe is already running doesn't start a second copy — it just reopens the
+window.
 
 - Phone and laptop must share a network. Corporate/guest Wi-Fi with client
   isolation blocks this; a phone hotspot is the fallback.
@@ -154,8 +244,9 @@ to **off**:
 | `prefer_pocket_transcripts` | Use Pocket's transcription instead of local Whisper |
 | `delete_from_device` | Remove files from the device after a verified copy |
 
-`config.json` is gitignored because it holds your Pocket API key and the
-remote's auth token. Don't commit it.
+`config.json` is gitignored because it holds your API keys (Pocket, AI
+providers, Granola) and the remote's auth token. Don't commit it. Your
+Granola sign-in lives in `granola_auth.json`, also gitignored.
 
 For the Pocket API, use a **personal** key (`pk_...` from Settings →
 Developer → API Keys) — organization keys are rejected by the upload endpoint.
@@ -168,7 +259,7 @@ Developer → API Keys) — organization keys are rejected by the upload endpoin
 | `from-usb [--watch]` | Copy new recordings off the Pocket drive and transcribe |
 | `pull [--days N] [--id X]` | Fetch from Pocket's cloud API (requires the toggle) |
 | `transcribe <file>` | Transcribe any audio file you already have |
-| `serve [--port N]` | Start the phone remote |
+| `serve [--port N] [--open]` | Start the app (and open its window with `--open`) |
 | `config` | Show current settings and device status |
 
 ## Known unknowns
