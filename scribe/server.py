@@ -1025,16 +1025,27 @@ def _show_running(cfg: Config, url: str) -> None:
 
     from . import window
 
-    try:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{cfg.server_port}/api/show?token={cfg.server_token}",
-            data=b"{}", method="POST", headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            if json.loads(r.read() or b"{}").get("shown"):
-                log.info("brought the running window to the front")
-                return
-    except Exception as e:
-        log.info("couldn't reach the running Scribe's window (%s); opening one", e)
+    # Only open a second window when the running Scribe says it has none
+    # (e.g. it was started with plain `serve`). If it's just slow to answer,
+    # keep asking rather than doubling up windows.
+    for attempt in range(4):
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{cfg.server_port}/api/show?token={cfg.server_token}",
+                data=b"{}", method="POST", headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                shown = json.loads(r.read() or b"{}").get("shown")
+            break
+        except Exception as e:
+            log.info("the running Scribe didn't answer (%s); retrying", e)
+            time.sleep(1)
+    else:
+        log.warning("the running Scribe isn't answering; not opening a second copy")
+        return
+    if shown:
+        log.info("brought the running window to the front")
+        return
+    log.info("the running Scribe has no window; opening one onto it")
     if not window.run(url):
         _open_ui(url)
 
