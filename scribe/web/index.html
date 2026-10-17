@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#262624" id="metatheme">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Scribe</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23262624'/%3E%3Ccircle cx='32' cy='32' r='11' fill='%23e8933a'/%3E%3C/svg%3E">
+<script>
+  // Theme before first paint, so there's no flash. "system" follows the OS.
+  (function () {
+    var pref = "system";
+    try { pref = localStorage.getItem("scribe-theme") || "system"; } catch (e) {}
+    var dark = pref === "dark" ||
+      (pref === "system" && !matchMedia("(prefers-color-scheme: light)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    try { if (localStorage.getItem("scribe-side") === "1") document.documentElement.classList.add("side-collapsed"); } catch (e) {}
+  })();
+</script>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-rec="idle">
+<div class="offline" id="offline" hidden>Can't reach Scribe. Is it still running?</div>
+
+<div class="app">
+  <!-- Sidebar ------------------------------------------------------------>
+  <aside class="side" id="side">
+    <div class="side-head">
+      <button class="icon-btn" id="side-toggle" title="Hide sidebar" aria-label="Hide sidebar"><i data-i="sidebar"></i></button>
+      <span class="brand"><span class="lamp" aria-hidden="true"></span>Scribe</span>
+    </div>
+
+    <label class="search">
+      <i data-i="search"></i>
+      <input id="q" type="search" placeholder="Search" autocomplete="off" spellcheck="false" aria-label="Search meetings">
+      <kbd>Ctrl K</kbd>
+    </label>
+
+    <nav class="nav-list">
+      <a class="nav" href="#/" data-nav="home"><i data-i="home"></i><span>Home</span></a>
+      <a class="nav" href="#/settings" data-nav="settings"><i data-i="sliders"></i><span>Settings</span></a>
+    </nav>
+
+    <div class="side-label">Folders</div>
+    <div class="nav-list" id="folders"></div>
+    <button class="nav nav-add" id="add-folder"><i data-i="folderPlus"></i><span>Add folder</span></button>
+
+    <div class="side-foot">
+      <div class="foot-icons">
+        <button class="icon-btn" id="theme-btn" title="Switch light / dark" aria-label="Switch light or dark"><i data-i="moon"></i></button>
+        <button class="icon-btn" id="phone-btn" title="Link your phone" aria-label="Link your phone"><i data-i="phone"></i></button>
+        <button class="icon-btn" id="log-btn" title="Activity log" aria-label="Activity log"><i data-i="list"></i></button>
+      </div>
+      <div class="workspace">
+        <span class="ws-mark">S</span>
+        <span class="ws-text"><b>Scribe</b><small id="cloud-state">Local only</small></span>
+      </div>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main" id="main">
+    <!-- Home ------------------------------------------------------------->
+    <section class="view" id="view-home">
+      <div class="topbar">
+        <button class="icon-btn menu-btn" data-open-side aria-label="Show sidebar"><i data-i="sidebar"></i></button>
+        <span class="grow"></span>
+        <button class="icon-btn round" id="pull-btn" title="Pull recordings from your Pocket (USB)" aria-label="Pull from Pocket"><i data-i="download"></i></button>
+        <button class="pill-btn" id="new-btn"><i data-i="plus"></i>New note</button>
+      </div>
+
+      <div class="page">
+        <h1 class="serif page-title" id="home-title">Home</h1>
+
+        <div class="now card" id="now">
+          <div class="now-date">
+            <span class="now-day serif" id="now-day"></span>
+            <span class="now-month"><b id="now-month"></b><small id="now-wd"></small></span>
+          </div>
+          <div class="now-body">
+            <div class="now-idle" id="now-idle">
+              <input class="now-input" id="now-title" placeholder="What's this meeting?" autocomplete="off" enterkeyhint="go">
+              <button class="btn primary" id="now-start"><i data-i="mic"></i>Start recording</button>
+              <div class="now-hint" id="now-hint"></div>
+            </div>
+            <div class="now-live" id="now-live" hidden>
+              <div class="live-head">
+                <span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <span id="live-state">Recording</span>
+                <span class="timer" id="live-timer">00:00</span>
+              </div>
+              <div class="live-title serif" id="live-title"></div>
+              <div class="live-actions">
+                <button class="btn" id="live-pause"></button>
+                <button class="btn rec" id="live-stop"><i data-i="stop"></i>Stop</button>
+                <button class="btn ghost" id="live-open">Open note</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="work" id="work" hidden><span class="lamp busy"></span><span id="work-text"></span></div>
+        <div class="list" id="list"></div>
+      </div>
+    </section>
+
+    <!-- Note ------------------------------------------------------------->
+    <section class="view" id="view-note" hidden>
+      <div class="topbar">
+        <button class="icon-btn menu-btn" data-open-side aria-label="Show sidebar"><i data-i="sidebar"></i></button>
+        <a class="pill-btn back" href="#/" aria-label="Back to home"><i data-i="back"></i><i data-i="home"></i></a>
+        <span class="grow"></span>
+        <span class="saved" id="saved"></span>
+        <div class="menu-wrap">
+          <button class="icon-btn round" id="more-btn" aria-label="More actions"><i data-i="more"></i></button>
+          <div class="menu" id="more-menu" hidden>
+            <a id="m-audio"><i data-i="download"></i>Download recording</a>
+            <a id="m-transcript"><i data-i="doc"></i>Download transcript</a>
+            <button id="m-retranscribe"><i data-i="refresh"></i>Transcribe again</button>
+            <button id="m-delete" class="danger"><i data-i="trash"></i>Delete note</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="page note-page">
+        <input class="note-title serif" id="n-title" placeholder="New note" autocomplete="off" aria-label="Title">
+        <div class="chips">
+          <span class="chip" id="n-date"><i data-i="calendar"></i><span></span></span>
+          <span class="chip" id="n-dur"><i data-i="clock"></i><span></span></span>
+          <span class="chip" id="n-src"><i data-i="mic"></i><span></span></span>
+          <label class="chip chip-select"><i data-i="folder"></i><select id="n-folder" aria-label="Folder"></select></label>
+        </div>
+
+        <div class="seg" role="tablist">
+          <button role="tab" data-tab="notes" aria-selected="true">My notes</button>
+          <button role="tab" data-tab="transcript" aria-selected="false">Transcript</button>
+        </div>
+
+        <div id="tab-notes">
+          <textarea class="note-body" id="n-body" placeholder="Write notes…" aria-label="Your notes"></textarea>
+        </div>
+        <div id="tab-transcript" hidden>
+          <div class="transcript" id="n-transcript"></div>
+        </div>
+      </div>
+
+      <div class="dock" id="dock" hidden><div class="dock-pill" id="dock-pill"></div></div>
+      <audio id="player" preload="metadata"></audio>
+    </section>
+
+    <!-- Settings --------------------------------------------------------->
+    <section class="view" id="view-settings" hidden>
+      <div class="topbar">
+        <button class="icon-btn menu-btn" data-open-side aria-label="Show sidebar"><i data-i="sidebar"></i></button>
+        <a class="pill-btn back" href="#/" aria-label="Back to home"><i data-i="back"></i><i data-i="home"></i></a>
+        <span class="grow"></span>
+      </div>
+
+      <div class="page settings">
+        <h1 class="serif page-title">Preferences</h1>
+
+        <h2 class="group">General</h2>
+        <div class="card rows">
+          <div class="srow">
+            <div class="stext"><b>Transcribe automatically</b><small>Start transcribing as soon as a recording stops. When off, recordings just save and you transcribe from the note.</small></div>
+            <label class="switch"><input type="checkbox" data-key="auto_transcribe"><span></span></label>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Theme</b><small>Choose your interface color scheme</small></div>
+            <select class="sel" id="s-theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+          </div>
+        </div>
+
+        <h2 class="group">Recording</h2>
+        <div class="card rows">
+          <div class="srow">
+            <div class="stext"><b>Microphone</b><small id="s-loop">Your side of the conversation</small></div>
+            <select class="sel wide" id="s-mic" data-key="mic_device"></select>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Recordings folder</b><small>Relative to the app folder, or a full path</small></div>
+            <input class="field wide" data-key="recordings_dir" spellcheck="false">
+          </div>
+        </div>
+
+        <h2 class="group">Transcription</h2>
+        <div class="card rows">
+          <div class="srow">
+            <div class="stext"><b>Speech model</b><small>Bigger is more accurate but slower. base.en is a good choice on ARM laptops.</small></div>
+            <select class="sel" data-key="whisper_model">
+              <option value="tiny.en">tiny.en (fastest)</option>
+              <option value="base.en">base.en</option>
+              <option value="small.en">small.en</option>
+              <option value="medium.en">medium.en (most accurate)</option>
+            </select>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Processor</b><small>cuda needs an NVIDIA graphics card</small></div>
+            <select class="sel" data-key="whisper_device"><option value="cpu">cpu</option><option value="cuda">cuda</option></select>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Speaker names</b><small>How the two sides of a call are labelled in transcripts</small></div>
+            <div class="pair">
+              <input class="field" data-key="me_label" aria-label="Your label">
+              <input class="field" data-key="them_label" aria-label="Their label">
+            </div>
+          </div>
+        </div>
+
+        <h2 class="group">Pocket</h2>
+        <div class="card rows">
+          <div class="srow">
+            <div class="stext"><b>Delete from the device after copying</b><small>Only after the copy is verified. Off keeps your Pocket's originals.</small></div>
+            <label class="switch"><input type="checkbox" data-key="delete_from_device"><span></span></label>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Pocket cloud</b><small class="warn">Turning this on lets Scribe send audio to Pocket's servers</small></div>
+            <label class="switch"><input type="checkbox" data-key="use_pocket_api"><span></span></label>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Push recordings to Pocket</b><small>Upload PC recordings to your Pocket account (needs Pocket cloud)</small></div>
+            <label class="switch"><input type="checkbox" data-key="push_to_pocket"><span></span></label>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Use Pocket's transcripts</b><small>Instead of local transcription (needs Pocket cloud)</small></div>
+            <label class="switch"><input type="checkbox" data-key="prefer_pocket_transcripts"><span></span></label>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>API key</b><small>Stored only in config.json on this computer</small></div>
+            <input class="field wide" type="password" id="s-key" data-key="pocket_api_key" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+
+        <h2 class="group">Phone remote</h2>
+        <div class="card rows">
+          <div class="srow">
+            <div class="stext"><b>Link your phone</b><small>Scan a QR code to start and stop recordings from your phone (same Wi-Fi)</small></div>
+            <button class="btn" id="s-phone"><i data-i="phone"></i>Show QR code</button>
+          </div>
+        </div>
+
+        <h2 class="group">About</h2>
+        <div class="card rows">
+          <div class="srow">
+            <div class="stext"><b>Activity log</b><small>Everything Scribe does. Check here first when something looks stuck.</small></div>
+            <button class="btn" id="s-log"><i data-i="list"></i>View log</button>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Quit Scribe</b><small>Stops the background engine. A recording in progress would be lost.</small></div>
+            <button class="btn warn" id="s-quit"><i data-i="power"></i>Quit</button>
+          </div>
+          <div class="srow meta" id="s-root"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <header><span id="modal-title"></span><button class="icon-btn" id="modal-close" aria-label="Close"><i data-i="x"></i></button></header>
+    <div class="sheet-body" id="modal-body"></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -47,11 +47,10 @@ python -m venv .venv
 copy config.example.json config.json
 ```
 
-Then **double-click `Scribe App.bat`** — the GUI opens in its own window
-(record, play recordings, read transcripts, pull from the Pocket, settings,
-dark/light toggle). The engine runs windowless in the background and logs to
-`scribe.log`; quit it from the ⚙ settings panel. If you want a visible
-console instead, run `scribe.bat serve --open`.
+Then **double-click `Scribe App.bat`** — the app opens in its own window.
+The engine runs windowless in the background and logs to `scribe.log`; quit
+it from Settings → Quit. If you want a visible console instead, run
+`scribe.bat serve --open`.
 
 The same things are available as commands, if you prefer a terminal:
 
@@ -113,36 +112,54 @@ Notes for ARM:
   and step back up if quality allows.
 - Recording and the phone remote are I/O-bound and run fine under emulation.
 
-## The GUI and the phone remote
+## The app
 
-They're the same thing. `Scribe App.bat` (or `scribe.bat serve --open`)
-starts a small LAN server and opens the page in an app window on the PC —
-start/pause/stop controls, an elapsed counter that freezes while paused, a
-status lamp in the Pocket's own LED colors, a transcripts tab
-(read/copy/download) and a recordings tab (play/download/transcribe), a
-"Pull from Pocket" button, a settings panel, and a dark/light toggle that
-follows the OS until you override it.
+Laid out like Granola: every meeting is a **note**. The sidebar has search
+(Ctrl+K, covers titles, your notes and transcripts), Home, and your folders.
+Home shows today's date and a **Start recording** card, then your meetings
+grouped by day, each labelled when it's still recording, transcribing, or
+not transcribed yet. **New note** (top right) starts recording straight
+away; the ↓ button pulls new recordings off your Pocket.
+
+A note has a title, chips for date, length, source and folder, and two tabs:
+
+- **My notes** — type while the meeting runs; it saves as you go.
+- **Transcript** — drawn as a conversation, you on the right and them on
+  the left (the stereo recording knows who said what). Click any timestamp
+  to play the recording from that moment.
+
+The pill at the bottom works like Granola's: pause, resume and stop while
+recording, then a player once the audio is saved. The **…** menu downloads
+the recording or transcript, re-runs transcription, or deletes the note.
 
 Capture and transcription are separate steps. Audio streams to disk while
-you record — a crash loses seconds, not the meeting — and the WAV lands in
-the Recordings tab the moment you press Stop, whether or not it ever gets
-transcribed. By default transcription starts automatically after Stop
-(watch the lamp breathe blue); turn that off in Settings and use each
-recording's **Transcribe** button when you're ready. Either way you can
-start the next recording while the last one is still transcribing.
+you record — a crash loses seconds, not the meeting — and the note has its
+recording the moment you press Stop, whether or not it's ever transcribed.
+By default transcription starts automatically (the lamp breathes blue);
+turn that off in Settings and press **Transcribe** on the note when you're
+ready. You can start the next recording while the last one transcribes.
 
-Settings covers: which microphone to record from (the speakers side always
-follows the system default output), where recordings are saved (default:
-`recordings` in the app folder), Whisper model, speaker labels, the Pocket
-cloud toggles, and the API key — no JSON editing. The panel also has
-**Link phone** (a QR code your phone scans to open the remote), **View log**
-(the same `scribe.log` the engine writes — start there when something looks
-stuck) and **Quit Scribe**, which stops the background engine.
+**Settings** is a single preferences page: auto-transcribe, theme
+(System/Light/Dark), microphone, recordings folder, speech model, speaker
+names, the Pocket options and API key, plus **Link your phone**, the
+activity log and Quit.
 
-Scan the Link-phone QR on the same Wi-Fi and add the page to the home
-screen, and the identical page is your remote. Double-clicking the launcher
-while Scribe is already running doesn't start a second copy — it just
-reopens the window.
+Files that were already in `recordings/` or `transcripts/` (from the CLI,
+the Pocket, or older versions of Scribe) show up as notes automatically.
+Each note is a small JSON file in `notes/`; audio and transcripts stay where
+they always were.
+
+What Scribe deliberately doesn't copy from Granola: calendar sync, sharing,
+billing, and AI-written meeting summaries (those need a language model —
+local or cloud — which is a separate decision).
+
+## The phone remote
+
+Settings → **Link your phone** (or the phone icon in the sidebar) shows a QR
+code. Scan it on the same Wi-Fi and add the page to your home screen: it's
+the same app, laid out for a phone. Double-clicking the launcher while
+Scribe is already running doesn't start a second copy — it just reopens the
+window.
 
 - Phone and laptop must share a network. Corporate/guest Wi-Fi with client
   isolation blocks this; a phone hotspot is the fallback.
@@ -176,7 +193,7 @@ Developer → API Keys) — organization keys are rejected by the upload endpoin
 | `from-usb [--watch]` | Copy new recordings off the Pocket drive and transcribe |
 | `pull [--days N] [--id X]` | Fetch from Pocket's cloud API (requires the toggle) |
 | `transcribe <file>` | Transcribe any audio file you already have |
-| `serve [--port N]` | Start the phone remote |
+| `serve [--port N] [--open]` | Start the app (and open its window with `--open`) |
 | `config` | Show current settings and device status |
 
 ## Known unknowns

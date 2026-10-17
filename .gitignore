@@ -4,6 +4,7 @@ config.json
 # Local data
 recordings/
 transcripts/
+notes/
 models/
 ingested.json
 scribe.log*

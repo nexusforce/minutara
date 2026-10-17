@@ -67,11 +67,13 @@ class Config:
     # "recordings_dir" in config.json — relative paths resolve under APP_ROOT).
     recordings_dir: Path = field(default_factory=lambda: APP_ROOT / "recordings")
     transcripts_dir: Path = field(default_factory=lambda: APP_ROOT / "transcripts")
+    notes_dir: Path = field(default_factory=lambda: APP_ROOT / "notes")
     model_dir: Path = field(default_factory=lambda: APP_ROOT / "models")
     manifest_path: Path = field(default_factory=lambda: APP_ROOT / "ingested.json")
 
     def ensure_dirs(self) -> None:
-        for d in (self.recordings_dir, self.transcripts_dir, self.model_dir):
+        for d in (self.recordings_dir, self.transcripts_dir, self.notes_dir,
+                  self.model_dir):
             d.mkdir(parents=True, exist_ok=True)
 
     @property
