@@ -86,7 +86,24 @@ jobs:
           if (-not $again.WaitForExit(20000)) { throw "a second launch didn't hand over to the running app" }
           $shown = Invoke-RestMethod -Method Post "http://127.0.0.1:$port/api/show?token=$token"
           if (-not $shown.shown) { throw "the running window couldn't be brought to the front" }
-          Stop-Process -Id $win.Id -Force
+
+          # The floating window: preview the meeting pop-up and check it drew itself.
+          Invoke-RestMethod -Method Post "http://127.0.0.1:$port/api/meeting/preview?token=$token" | Out-Null
+          $fw = $null
+          $deadline = (Get-Date).AddSeconds(20)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 1
+            $fw = (Invoke-RestMethod "http://127.0.0.1:$port/api/status?token=$token").widget
+            if ($fw.mode -eq "prompt" -and $fw.page_mode -eq "prompt") { break }
+          }
+          Write-Host "floating window: $($fw | ConvertTo-Json -Compress)"
+          if ($fw.mode -ne "prompt" -or $fw.page_mode -ne "prompt") { throw "the floating window didn't show the meeting pop-up" }
+          Invoke-RestMethod -Method Post "http://127.0.0.1:$port/api/meeting/dismiss?token=$token" | Out-Null
+
+          # Closing the main window quits Scribe (the hidden floating window
+          # mustn't keep it running).
+          $win.CloseMainWindow() | Out-Null
+          if (-not $win.WaitForExit(45000)) { throw "closing the window didn't quit Scribe" }
 
           Write-Host "--- scribe.log (tail)"
           Get-Content scribe.log -Tail 25

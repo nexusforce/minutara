@@ -10,6 +10,7 @@ server.py falls back to an Edge app window.
 
 from __future__ import annotations
 
+import queue
 import sys
 import threading
 
@@ -48,10 +49,11 @@ def _background() -> str:
         return "#FFFFFF"
 
 
-def run(url: str, on_closing=None) -> bool:
+def run(url: str, on_closing=None, widget=None) -> bool:
     """
     Show Scribe's window and block until it closes. Must run on the main
     thread. Returns False, without blocking, if no native window can open.
+    `widget` (a WidgetUI) also sets up the floating window, hidden until needed.
     """
     global _window
     ok, detail = available()
@@ -67,6 +69,8 @@ def run(url: str, on_closing=None) -> bool:
         if on_closing:
             _window.events.closing += on_closing
         _window.events.shown += _shown.set
+        if widget is not None:
+            widget.create(_window)
         log.info("opening the app window")
         # private_mode=False keeps the page's own settings (theme, last view)
         # between runs, stored next to the app.
@@ -80,6 +84,150 @@ def run(url: str, on_closing=None) -> bool:
     _window = None
     log.info("app window closed")
     return True
+
+
+def _main_in_front() -> bool:
+    """Is Scribe's main window the one you're using right now?"""
+    import ctypes
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetWindowTextW(hwnd, buf, 256)
+    return buf.value == "Scribe"
+
+
+class WidgetUI:
+    """
+    The floating window: small, frameless, always on top, never takes focus
+    from your meeting, and stays where you drag it. All window calls go
+    through one worker thread, so nothing that asks it to show or hide ever
+    waits on the window.
+    """
+
+    TITLE = "Scribe recorder"
+
+    def __init__(self, url: str, position: str = "", on_moved=None):
+        self.url = url
+        self.pos = _parse_pos(position)
+        self.on_moved = on_moved
+        self.win = None
+        self.ready = threading.Event()
+        self.closing_app = False
+        self.q: "queue.Queue" = queue.Queue()
+        self.size = (0, 0)
+        self.visible = False
+
+    # -- set-up (main thread, before webview.start) --------------------------
+    def create(self, main) -> None:
+        import webview
+        try:
+            self.win = webview.create_window(
+                self.TITLE, self.url, width=184, height=164, hidden=True, frameless=True,
+                easy_drag=False, on_top=True, focus=False, resizable=False,
+                background_color=_background(), text_select=False)
+        except Exception:
+            log.exception("couldn't create the floating window")
+            self.win = None
+            return
+        self.win.events.shown += self._shown
+        self.win.events.moved += self._moved
+        self.win.events.closing += self._closing
+        main.events.closed += self._main_closed
+        threading.Thread(target=self._work, daemon=True, name="widget-ui").start()
+
+    def _shown(self) -> None:
+        self.ready.set()
+        try:   # rounded corners on Windows 11 (DWMWA_WINDOW_CORNER_PREFERENCE = round)
+            import ctypes
+            hwnd = self.win.native.Handle.ToInt32()
+            pref = ctypes.c_int(2)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(pref), 4)
+        except Exception:
+            pass
+
+    def _moved(self, x, y) -> None:
+        if self.visible and self.on_moved:
+            self.pos = (int(x), int(y))
+            self.on_moved(int(x), int(y))
+
+    def _closing(self):
+        # Alt+F4 on the floating window just hides it; only the app closing closes it.
+        if self.closing_app:
+            return True
+        self.q.put(("hide", None))
+        return False
+
+    def _main_closed(self) -> None:
+        self.closing_app = True
+        try:
+            if self.win is not None:
+                self.win.destroy()
+        except Exception:
+            pass
+
+    # -- used by WidgetController ---------------------------------------------
+    def available(self) -> bool:
+        return self.win is not None and self.ready.is_set() and not self.closing_app
+
+    def main_in_front(self) -> bool:
+        return _main_in_front()
+
+    def show(self, mode: str, size: tuple[int, int]) -> None:
+        self.q.put(("show", (mode, size)))
+
+    def hide(self) -> None:
+        self.q.put(("hide", None))
+
+    # -- worker -------------------------------------------------------------
+    def _work(self) -> None:
+        while True:
+            op, arg = self.q.get()
+            if self.closing_app:
+                return
+            try:
+                if op == "show":
+                    self._do_show(*arg)
+                else:
+                    self.visible = False
+                    self.win.hide()
+            except Exception as e:
+                log.warning("floating window %s failed: %s", op, e)
+
+    def _do_show(self, mode: str, size: tuple[int, int]) -> None:
+        import webview
+        w, h = size
+        try:
+            self.win.evaluate_js(f"window.scribeMode && window.scribeMode({mode!r})")
+        except Exception:
+            pass
+        if (w, h) != self.size:
+            self.win.resize(w, h)
+            self.size = (w, h)
+        x, y = self._place(w, h, webview)
+        self.win.move(x, y)
+        self.visible = True
+        self.win.show()
+
+    def _place(self, w: int, h: int, webview) -> tuple[int, int]:
+        """Where you last left it, kept on screen; bottom right the first time."""
+        try:
+            scr = webview.screens[0]
+            sw, sh = int(scr.width), int(scr.height)
+        except Exception:
+            sw, sh = 1920, 1080
+        if self.pos:
+            x, y = self.pos
+        else:
+            x, y = sw - w - 24, sh - h - 88   # clear of the taskbar
+        return max(0, min(x, sw - w)), max(0, min(y, sh - h))
+
+
+def _parse_pos(text: str):
+    try:
+        x, y = (int(v) for v in str(text).split(","))
+        return (x, y)
+    except Exception:
+        return None
 
 
 def bring_to_front() -> bool:

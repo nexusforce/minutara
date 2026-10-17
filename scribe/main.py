@@ -184,7 +184,8 @@ def cmd_doctor(args, cfg) -> None:
 
     def web_check():
         from .server import WEB_DIR
-        missing = [f for f in ("index.html", "app.js", "app.css") if not (WEB_DIR / f).exists()]
+        missing = [f for f in ("index.html", "app.js", "app.css", "widget.html")
+                   if not (WEB_DIR / f).exists()]
         if missing:
             raise FileNotFoundError(f"missing {', '.join(missing)} in {WEB_DIR}")
         return str(WEB_DIR)
