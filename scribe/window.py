@@ -83,16 +83,24 @@ def run(url: str, on_closing=None) -> bool:
 
 
 def bring_to_front() -> bool:
-    """Show and focus the open window (a second launch of Scribe calls this)."""
+    """
+    Show and focus the open window (a second launch of Scribe calls this).
+    Returns at once: the window acts on it when its own thread is free (it
+    may still be loading), so the caller never waits on the window.
+    """
     w = _window
-    if w is None or not _shown.is_set():
+    if w is None:
         return False
-    try:
-        w.restore()
-        w.show()
-        w.on_top = True   # the dependable way to come to the front on Windows
-        w.on_top = False
-        return True
-    except Exception as e:
-        log.warning("couldn't bring the window to the front: %s", e)
-        return False
+
+    def act():
+        _shown.wait(60)
+        try:
+            w.restore()
+            w.show()
+            w.on_top = True   # the dependable way to come to the front on Windows
+            w.on_top = False
+        except Exception as e:
+            log.warning("couldn't bring the window to the front: %s", e)
+
+    threading.Thread(target=act, daemon=True).start()
+    return True
