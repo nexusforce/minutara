@@ -169,11 +169,21 @@ ready. You can start the next recording while the last one transcribes.
 names, the Pocket options and API key, plus **Link your phone**, the
 activity log and Quit.
 
-**Test mic** and **Test speakers** (Settings → Recording) record four
-seconds, play them back and say what they found: working, too quiet, silent
-(often Windows' microphone privacy switch), static, or a device whose driver
-sends audio at the wrong speed. Use them before a real meeting, and after
-changing microphones.
+**Microphone** and **Speakers** (Settings → Recording) pick what Scribe
+records: your side from the mic, their side from whichever output your
+sound comes out of (speakers, headphones, Bluetooth, a monitor). Left on
+default, Scribe follows Windows' default output.
+
+**Test mic** and **Test speakers** record four seconds, play them back and
+say what they found: working, too quiet, silent (often Windows' microphone
+privacy switch), static, or a device whose driver sends audio at the wrong
+speed. The speakers test plays its own chime, so nothing else needs to be
+playing. Use them before a real meeting, and after changing devices.
+
+Playback is at a normal volume. The player gets a listening copy of each
+recording: both sides mixed into both ears, each brought to a normal speech
+level. The recording itself is untouched; transcription and **Download**
+use the original, which keeps you and them on separate channels.
 
 Recordings follow the clock. Windows sends nothing from the speakers while
 nothing plays, and some drivers deliver audio too fast or too slow; Scribe

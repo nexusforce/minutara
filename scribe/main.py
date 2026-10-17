@@ -33,7 +33,7 @@ def cmd_record(args, cfg) -> None:
 
     stop = threading.Event()
     print(f"Recording '{args.title}'. Ctrl+C to stop.\n")
-    result = record(wav, stop, mic_name=cfg.mic_device)
+    result = record(wav, stop, mic_name=cfg.mic_device, speaker_name=cfg.speaker_device)
     print(f"\nStopped after {result.duration_s/60:.1f} min -> {wav.name}")
 
     if args.no_transcribe:

@@ -67,17 +67,36 @@ def _host_name(p: pyaudio.PyAudio, dev: dict) -> str:
         return "?"
 
 
-def _find_loopback(p: pyaudio.PyAudio) -> dict:
-    """Find the loopback device matching the current default output device."""
-    wasapi = _wasapi(p)
-    default_out = p.get_device_info_by_index(wasapi["defaultOutputDevice"])
+def speaker_label(dev: dict) -> str:
+    """'Speakers (Realtek) [Loopback]' -> 'Speakers (Realtek)'."""
+    return str(dev["name"]).replace(" [Loopback]", "").strip()
 
+
+def _find_loopback(p: pyaudio.PyAudio, name: str = "") -> dict:
+    """
+    The capture side of an output device: the one named in Settings → Speakers,
+    else the one matching Windows' current default output.
+    """
     # Loopback devices are exposed as separate INPUT devices whose name
     # contains the output device's name.
-    for dev in p.get_loopback_device_info_generator():
+    loops = list(p.get_loopback_device_info_generator())
+    if name:
+        want = name.lower().strip()
+        for d in loops:
+            if speaker_label(d).lower() == want:
+                return d
+        for d in loops:
+            if want in str(d["name"]).lower():
+                return d
+        log.warning("Configured speakers %r not found; using Windows' default output.", name)
+
+    wasapi = _wasapi(p)
+    default_out = p.get_device_info_by_index(wasapi["defaultOutputDevice"])
+    for dev in loops:
         if default_out["name"] in dev["name"]:
             return dev
-
+    if loops:
+        return loops[0]
     raise RuntimeError(
         f"No loopback device found for output {default_out['name']!r}. "
         "Check that audio is actually playing through it."
@@ -134,11 +153,16 @@ def list_input_devices() -> dict:
             name = str(d["name"])
             if name not in mics:
                 mics.append(name)
+        speakers = []
         try:
-            loopback = str(_find_loopback(p)["name"])
+            for d in p.get_loopback_device_info_generator():
+                if speaker_label(d) not in speakers:
+                    speakers.append(speaker_label(d))
+            loopback = speaker_label(_find_loopback(p))
         except Exception:
             pass
-        return {"mics": mics, "default": default, "loopback": loopback}
+        return {"mics": mics, "default": default, "loopback": loopback,
+                "speakers": speakers, "speaker_default": loopback}
     finally:
         p.terminate()
 
@@ -281,7 +305,7 @@ class _Stream(threading.Thread):
             rate=rate,
             input=True,
             input_device_index=device["index"],
-            frames_per_buffer=getattr(pyaudio, "paFramesPerBufferUnspecified", 0),
+            frames_per_buffer=max(rate // 100, 64),   # 10 ms, WASAPI's own period
             stream_callback=self._cb,
         )
 
@@ -385,7 +409,8 @@ def _check(stats: StreamStats) -> None:
 # --- recording ---------------------------------------------------------------
 
 def record(out_path: Path, stop_event: threading.Event | None = None,
-           mic_name: str = "", pause_event: threading.Event | None = None) -> CaptureResult:
+           mic_name: str = "", pause_event: threading.Event | None = None,
+           speaker_name: str = "") -> CaptureResult:
     """
     Record until stop_event is set (or Ctrl+C). Writes a 16kHz stereo WAV.
     mic_name picks a specific microphone by (partial) name; "" = default.
@@ -409,7 +434,7 @@ def record(out_path: Path, stop_event: threading.Event | None = None,
 
     try:
         try:
-            loopback_dev = _find_loopback(p)
+            loopback_dev = _find_loopback(p, speaker_name)
         except Exception as e:
             loopback_dev = None
             errors.append(f"speakers: {e}")
@@ -488,7 +513,8 @@ def record(out_path: Path, stop_event: threading.Event | None = None,
 
 # --- device test -------------------------------------------------------------
 
-def test_device(kind: str = "mic", mic_name: str = "", seconds: float = 4.0) -> dict:
+def test_device(kind: str = "mic", mic_name: str = "", seconds: float = 4.0,
+                speaker_name: str = "") -> dict:
     """
     Record a few seconds from one device and report what came in: how loud,
     whether the device kept time, and a WAV of it to play back. For the
@@ -499,7 +525,7 @@ def test_device(kind: str = "mic", mic_name: str = "", seconds: float = 4.0) -> 
     buf = io.BytesIO()
     try:
         if kind == "speakers":
-            dev = _find_loopback(p)
+            dev = _find_loopback(p, speaker_name)
         else:
             dev = _pick_mic(p, mic_name)
         clock = _Clock(None)
@@ -517,7 +543,9 @@ def test_device(kind: str = "mic", mic_name: str = "", seconds: float = 4.0) -> 
         p.terminate()
 
     st = s.stats
-    pcm = np.frombuffer(buf.getvalue(), dtype=np.int16)
+    from .listen import louder
+    clip = np.frombuffer(buf.getvalue(), dtype=np.int16).astype(np.float32) / 32768.0
+    pcm = (louder(clip) * 32767).astype(np.int16)   # played back at a normal volume
     wav = io.BytesIO()
     with wave.open(wav, "wb") as wf:
         wf.setnchannels(1)
@@ -552,8 +580,10 @@ def _verdict(kind: str, st: StreamStats) -> tuple[str, str]:
                           "which means its driver is misbehaving. Pick a different one.")
     if kind == "speakers":
         if st.sent_s < t * 0.3 or rms_db < -70:
-            return "quiet", ("Nothing came through. Windows only sends speaker audio while "
-                             "something is playing: start a video or song, then test again.")
+            name = st.device.replace(" [Loopback]", "")
+            return "quiet", (f"Nothing came through from {name}. If you heard the chime, your sound "
+                             "goes to a different device: pick it under Speakers and test again. "
+                             "If you didn't hear it, turn the volume up and unmute.")
         return "good", "Speaker capture works: Scribe can hear what your computer plays."
     if st.sent_s < t * 0.5:
         return "broken", ("The microphone barely sent any audio. Another app may be holding "

@@ -855,7 +855,7 @@ async function loadSettings() {
   S.config = c;
   $$("#view-settings [data-key]").forEach(el => {
     const k = el.dataset.key;
-    if (k === "mic_device" || !(k in c)) return;
+    if (k === "mic_device" || k === "speaker_device" || !(k in c)) return;
     if (el.type === "checkbox") el.checked = !!c[k];
     else {
       if (el.tagName === "SELECT" && ![...el.options].some(o => o.value === c[k])) {
@@ -872,7 +872,7 @@ async function loadSettings() {
   if (!S.aiDefaults) { try { S.aiDefaults = await getJSON("/api/ai/defaults"); } catch {} }
   renderAI();
   renderGranola();
-  loadDevices(c.mic_device);
+  loadDevices(c.mic_device, c.speaker_device);
   pollSettings();
 }
 const reloadConfig = async () => { S.config = await getJSON("/api/config"); };
@@ -1060,6 +1060,26 @@ async function pollSettings() {
 }
 setInterval(pollSettings, 2000);
 
+// A short chime through the computer's speakers, for the speakers test to hear.
+function playChime(seconds) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    const t0 = ctx.currentTime + 0.15;
+    for (let i = 0; i < Math.floor(seconds * 3); i++) {
+      const t = t0 + i / 3, o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = notes[i % notes.length];
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+      o.connect(g).connect(ctx.destination);
+      o.start(t); o.stop(t + 0.32);
+    }
+    setTimeout(() => ctx.close(), (seconds + 1) * 1000);
+  } catch {}
+}
+
 async function testAudio(kind) {
   const btn = kind === "mic" ? $("#t-mic") : $("#t-spk");
   const other = kind === "mic" ? $("#t-spk") : $("#t-mic");
@@ -1070,9 +1090,12 @@ async function testAudio(kind) {
   msg.className = "";
   msg.textContent = kind === "mic"
     ? "Recording 4 seconds: say a sentence at your normal volume."
-    : "Recording 4 seconds of what your computer is playing.";
+    : "Playing a chime and listening for it…";
   $("#t-result").hidden = true;
-  const r = await send("POST", "/api/devices/test", { kind, mic: $("#s-mic").value, seconds: 4 });
+  const req = send("POST", "/api/devices/test",
+    { kind, mic: $("#s-mic").value, speaker: $("#s-spk").value, seconds: 4 });
+  if (kind === "speakers") playChime(3.4);
+  const r = await req;
   btn.disabled = other.disabled = false;
   btn.innerHTML = label;
   const good = r.ok && r.verdict === "good";
@@ -1150,11 +1173,23 @@ $("#view-settings").addEventListener("click", async e => {
   }
 });
 
-async function loadDevices(selected) {
+function fillSelect(sel, items, selected, defLabel) {
+  sel.innerHTML = `<option value="">${esc(defLabel)}</option>` +
+    items.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+  if (selected && !items.includes(selected)) {
+    sel.insertAdjacentHTML("beforeend", `<option value="${esc(selected)}">${esc(selected)} (not connected)</option>`);
+  }
+  sel.value = selected || "";
+}
+
+async function loadDevices(selected, speaker) {
   const sel = $("#s-mic");
   sel.innerHTML = `<option value="">Finding microphones…</option>`;
+  $("#s-spk").innerHTML = `<option value="">Finding speakers…</option>`;
   try {
     const d = await getJSON("/api/devices");
+    fillSelect($("#s-spk"), d.speakers || [], speaker,
+      d.speaker_default ? `Windows default (${d.speaker_default})` : "Windows default");
     const def = d.default ? `System default (${d.default})` : "System default";
     sel.innerHTML = `<option value="">${esc(def)}</option>` +
       d.mics.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
@@ -1165,9 +1200,11 @@ async function loadDevices(selected) {
       sel.insertAdjacentHTML("beforeend", `<option value="${esc(selected)}">${esc(selected)} (not connected)</option>`);
     }
     sel.value = selected || "";
-    $("#s-loop").textContent = d.loopback ? `Their side is captured from ${d.loopback}`
-      : d.error ? `Audio devices unavailable: ${d.error}` : "Your side of the conversation";
-  } catch { sel.innerHTML = `<option value="">System default</option>`; }
+    $("#s-loop").textContent = d.error ? `Audio devices unavailable: ${d.error}` : "Your side of the conversation";
+  } catch {
+    sel.innerHTML = `<option value="">System default</option>`;
+    $("#s-spk").innerHTML = `<option value="">Windows default</option>`;
+  }
 }
 
 $("#view-settings").addEventListener("change", async e => {
