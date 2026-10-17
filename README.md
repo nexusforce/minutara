@@ -37,6 +37,24 @@ none of that:
 Transcripts are plain `.txt` — paste them into whatever LLM you like, or
 point your notes system at the folder.
 
+## Download the app (easiest)
+
+Grab **Scribe-windows.zip** from the [latest release](https://github.com/nexusforce/scribe/releases/latest),
+extract it somewhere permanent (or onto a USB stick) and double-click
+**Scribe.exe**. No Python needed. It's built automatically on every merge
+to `main`, and each build is tested on Windows before it's published.
+
+- The first time, Windows says "Windows protected your PC" (the app isn't
+  code-signed): click **More info → Run anyway**. Unblocking the zip first
+  (right-click → Properties → Unblock) avoids it.
+- Your settings, notes and recordings live next to Scribe.exe. To update,
+  extract a newer zip over the folder; your data stays.
+- `scribe-cli.exe` in the same folder is the command-line version
+  (`scribe-cli doctor` checks that every part Scribe needs works).
+- It's an x64 app; ARM laptops run it through Windows' built-in emulation.
+
+To build the .exe yourself: `powershell -ExecutionPolicy Bypass -File build\build_exe.ps1`.
+
 ## Quick start (from a clone)
 
 ```powershell
@@ -261,6 +279,7 @@ Developer → API Keys) — organization keys are rejected by the upload endpoin
 | `transcribe <file>` | Transcribe any audio file you already have |
 | `serve [--port N] [--open]` | Start the app (and open its window with `--open`) |
 | `config` | Show current settings and device status |
+| `doctor [--transcribe]` | Check that every part Scribe needs works on this machine |
 
 ## Known unknowns
 
