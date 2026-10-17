@@ -180,6 +180,21 @@ privacy switch), static, or a device whose driver sends audio at the wrong
 speed. The speakers test plays its own chime, so nothing else needs to be
 playing. Use them before a real meeting, and after changing devices.
 
+**Meetings.** When Zoom, Teams or Webex starts using your microphone, a
+small pop-up appears ("Zoom meeting · Take notes? Start / Not now"), like
+Granola's. Scribe reads which apps Windows says are using the mic; nothing
+is listened to. When the meeting app lets go of the mic while you're
+recording, the pop-up asks whether to stop. Scribe has to be open (it can
+be minimized). The list of meeting apps is a setting, and browsers (Google
+Meet, Teams on the web) can be added.
+
+**Floating recorder.** While recording, a small always-on-top window with
+the timer, pause, stop and a button back to Scribe appears whenever
+Scribe's own window isn't in front. Drag it anywhere (it remembers where);
+the – button tucks it away for the rest of that recording. Both are on by
+default and can be turned off in Settings → Meetings, which also has a
+**Show me** preview.
+
 Playback is at a normal volume. The player gets a listening copy of each
 recording: both sides mixed into both ears, each brought to a normal speech
 level. The recording itself is untouched; transcription and **Download**

@@ -30,7 +30,9 @@ from . import ai, granola, notes
 from . import config as config_mod
 from .config import AI_DEFAULTS, APP_ROOT, GRANOLA_DEFAULTS, Config
 from .log import LOG_PATH, get
+from .meetings import MeetingWatcher
 from .pipeline import process
+from .widget import WidgetController
 
 log = get("scribe.server")
 
@@ -199,6 +201,7 @@ class Recorder:
         self.final_elapsed = 0.0
         self.state = "idle"  # idle | recording | paused | saving | error
         self.last_message = ""
+        self.meeting_app = ""  # the meeting app this recording was started for, if any
 
     def _elapsed(self, now: float) -> float:
         if not self.started_at:
@@ -211,11 +214,12 @@ class Recorder:
             return self.final_elapsed
         return 0.0
 
-    def start(self, title: str) -> tuple[bool, str, str]:
+    def start(self, title: str, meeting_app: str = "") -> tuple[bool, str, str]:
         with self.lock:
             if self.state in LIVE_STATES:
                 return False, f"Already {self.state}.", self.note_id
             self.title = (title or "").strip()
+            self.meeting_app = meeting_app
             self.note_id = notes.unique_id(self.cfg, self.title)
             notes.create(self.cfg, self.note_id, title=self.title,
                          audio=f"{self.note_id}.wav", source="pc")
@@ -325,6 +329,7 @@ EDITABLE_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "whisper_model", "whisper_device",
     "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
+    "meeting_detect", "meeting_apps", "meeting_browsers", "floating_recorder",
     "delete_from_device", "pocket_base_url", "usb_volume_label", "usb_record_dir",
 )
 
@@ -369,7 +374,11 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             return "importing from Pocket"
         return ""
 
-    app.config["SCRIBE"] = {"rec": rec, "busy": busy, "activity": activity}
+    watcher = MeetingWatcher(cfg)
+    watcher.start()
+    widget = WidgetController(cfg, rec, watcher)
+    app.config["SCRIBE"] = {"rec": rec, "busy": busy, "activity": activity,
+                            "watcher": watcher, "widget": widget}
 
     def authed() -> bool:
         token = request.args.get("token") or request.headers.get("X-Token", "")
@@ -380,7 +389,9 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         if request.path.startswith("/api"):
             if not authed():
                 return jsonify({"error": "Bad or missing token."}), 401
-            activity["t"] = time.monotonic()
+            # The floating window polls constantly; it doesn't count as you using Scribe.
+            if not request.headers.get("X-Scribe-Widget"):
+                activity["t"] = time.monotonic()
 
     def fail(code: int, message: str):
         return jsonify({"ok": False, "message": message}), code
@@ -403,12 +414,16 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
                    "local": cfg.ai.get("provider") in ai.LOCAL}
         imp = importer.snapshot()
         s["granola"] = {k: imp[k] for k in ("state", "done", "total", "message")}
+        s["meeting"] = watcher.snapshot()
+        s["widget"] = widget.state()
+        s["meeting_app"] = rec.meeting_app if rec.state in LIVE_STATES else ""
         return jsonify(s)
 
     @app.post("/api/start")
     def start():
-        title = str((request.get_json(silent=True) or {}).get("title", ""))[:200]
-        ok, msg, note_id = rec.start(title)
+        data = request.get_json(silent=True) or {}
+        title = str(data.get("title", ""))[:200]
+        ok, msg, note_id = rec.start(title, meeting_app=str(data.get("meeting_app") or "")[:40])
         return jsonify({"ok": ok, "message": msg, "note_id": note_id}), (200 if ok else 409)
 
     @app.post("/api/pause")
@@ -593,6 +608,10 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             "them_label": cfg.them_label,
             "mic_device": cfg.mic_device,
             "speaker_device": cfg.speaker_device,
+            "meeting_detect": cfg.meeting_detect,
+            "meeting_apps": cfg.meeting_apps,
+            "meeting_browsers": cfg.meeting_browsers,
+            "floating_recorder": cfg.floating_recorder,
             "auto_transcribe": cfg.auto_transcribe,
             "recordings_dir": str(cfg.recordings_dir),
             "use_pocket_api": cfg.use_pocket_api,
@@ -681,6 +700,40 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             test_lock.release()
         log.info("%s test: %s (%s)", kind, result.get("verdict"), result.get("device"))
         return jsonify(result)
+
+    # --- meetings and the floating window ----------------------------------
+
+    @app.get("/widget")
+    def widget_page() -> Response:
+        return send_from_directory(WEB_DIR, "widget.html")
+
+    @app.post("/api/meeting/dismiss")
+    def meeting_dismiss():
+        watcher.dismiss()
+        return jsonify({"ok": True})
+
+    @app.post("/api/meeting/keep")
+    def meeting_keep():
+        watcher.clear_ended()
+        return jsonify({"ok": True})
+
+    @app.post("/api/meeting/preview")
+    def meeting_preview():
+        if rec.state in LIVE_STATES:
+            return fail(409, "Stop the recording first.")
+        watcher.preview(20)
+        return jsonify({"ok": True, "widget": widget.available(),
+                        "message": "Showing the meeting pop-up for 20 seconds."})
+
+    @app.post("/api/widget/hide")
+    def widget_hide():
+        widget.hide_for_recording()
+        return jsonify({"ok": True})
+
+    @app.post("/api/widget/seen")
+    def widget_seen():
+        widget.seen(str((request.get_json(silent=True) or {}).get("mode", ""))[:20])
+        return jsonify({"ok": True})
 
     @app.post("/api/show")
     def show():
@@ -1130,7 +1183,27 @@ def serve(cfg: Config, open_browser: bool = False) -> None:
             rec.stop()
 
     from . import window
-    if window.run(local_url, on_closing=closing):
+    state = app.config["SCRIBE"]
+    ui = None
+    try:
+        widget_url = f"http://127.0.0.1:{cfg.server_port}/widget?token={cfg.server_token}"
+        save_timer = {"t": None}
+
+        def moved(x, y):
+            # Remember where you dragged it (saved a moment after you let go).
+            cfg.widget_pos = f"{x},{y}"
+            if save_timer["t"]:
+                save_timer["t"].cancel()
+            save_timer["t"] = threading.Timer(1.0, config_mod.save, args=(cfg,))
+            save_timer["t"].start()
+
+        ui = window.WidgetUI(widget_url, cfg.widget_pos, on_moved=moved)
+        state["widget"].ui = ui
+        state["widget"].start()
+    except Exception:
+        log.exception("floating window unavailable")
+
+    if window.run(local_url, on_closing=closing, widget=ui):
         _finish_in_background(app.config["SCRIBE"])
         os._exit(0)
 

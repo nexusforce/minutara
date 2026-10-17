@@ -121,6 +121,13 @@ class Config:
     speaker_device: str = ""           # output to capture "their" side from; "" = Windows default
     auto_transcribe: bool = True       # transcribe automatically when a recording stops
 
+    # --- Meeting detection and the floating recorder ---
+    meeting_detect: bool = True        # pop up "Meeting detected" when a meeting app takes the mic
+    meeting_apps: str = "zoom.exe, teams.exe, msteams, webex, ciscocollabhost.exe"
+    meeting_browsers: bool = False     # also count browsers (Google Meet, Teams on the web)
+    floating_recorder: bool = True     # small on-top recorder while Scribe's window isn't in front
+    widget_pos: str = ""               # where you last dragged it ("x,y"); "" = bottom right
+
     # --- USB ingest ---
     usb_volume_label: str = "POCKET"
     usb_record_dir: str = "RECORD"
@@ -163,6 +170,7 @@ FLAT_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "pocket_base_url", "whisper_model", "whisper_device",
     "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
+    "meeting_detect", "meeting_apps", "meeting_browsers", "floating_recorder", "widget_pos",
     "usb_volume_label", "usb_record_dir",
     "delete_from_device", "server_port", "server_token",
 )

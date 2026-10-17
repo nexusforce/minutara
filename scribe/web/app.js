@@ -232,6 +232,7 @@ async function poll() {
   cloud.classList.toggle("cloud", !!sends);
   $$(".askbox").forEach(f => { f.hidden = !S.ai.enabled; });
   renderNow();
+  renderMeetCard(s);
   if (S.route.view === "note") renderDock();
 
   // Something changed (a recording saved, a transcript finished): refresh.
@@ -243,6 +244,22 @@ async function poll() {
     if (!first) refreshSoon();
   }
 }
+
+// When there's no floating window (an Edge window, or the phone), the
+// "meeting detected" prompt shows inside the app instead.
+function renderMeetCard(s) {
+  const m = s.meeting || {}, w = s.widget || {};
+  const show = !!m.app && !m.dismissed && !w.available && !LIVE.includes(s.state);
+  $("#meet-card").hidden = !show;
+  if (show) $("#mc-title").textContent = `${m.app} meeting${m.preview ? " (preview)" : ""}`;
+}
+$("#mc-start").onclick = async () => {
+  const m = (S.status && S.status.meeting) || {};
+  const r = await send("POST", "/api/start", { title: m.app ? `${m.app} meeting` : "", meeting_app: m.preview ? "" : m.app });
+  if (r.ok && r.note_id) location.hash = `#/note/${encodeURIComponent(r.note_id)}`;
+  poll();
+};
+$("#mc-skip").onclick = async () => { await send("POST", "/api/meeting/dismiss"); poll(); };
 
 // --- home ---------------------------------------------------------------------
 function renderDate() {
@@ -1164,6 +1181,10 @@ $("#view-settings").addEventListener("click", async e => {
     pollSettings(); poll();
   } else if (id === "gr-stop") {
     await send("POST", "/api/granola/stop"); toast("Stopping after the current meeting…");
+  } else if (id === "m-preview") {
+    const r = await send("POST", "/api/meeting/preview");
+    $("#m-msg").textContent = r.message || "Couldn't show the preview.";
+    poll();
   } else if (id === "pk-pull") {
     pullPocket();
   } else if (id === "pk-cloud") {
