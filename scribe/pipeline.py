@@ -84,7 +84,7 @@ def process(
 def _pocket_push(audio_path, cfg, title, duration_s, recorded_at) -> dict:
     from .pocket_client import PocketClient
 
-    client = PocketClient(cfg.pocket_api_key)
+    client = PocketClient(cfg.pocket_api_key, base_url=cfg.pocket_base_url)
     return client.upload_recording(
         audio_path,
         title=title,
@@ -99,7 +99,7 @@ def _pocket_transcribe(audio_path, cfg, title, duration_s, recorded_at) -> str:
 
     from .pocket_client import PocketClient
 
-    client = PocketClient(cfg.pocket_api_key)
+    client = PocketClient(cfg.pocket_api_key, base_url=cfg.pocket_base_url)
     data = client.upload_recording(
         audio_path,
         title=title,

@@ -17,16 +17,17 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import socket
 import threading
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
+from . import ai, granola, notes
 from . import config as config_mod
-from . import notes
-from .config import APP_ROOT, Config
+from .config import AI_DEFAULTS, APP_ROOT, GRANOLA_DEFAULTS, Config
 from .log import LOG_PATH, get
 from .pipeline import process
 
@@ -51,6 +52,7 @@ class Transcriber:
         self.current = ""
         self.current_title = ""
         self.last_message = ""
+        self.after = None   # called with the note id after each successful transcript
         threading.Thread(target=self._work, daemon=True).start()
 
     def enqueue(self, path: Path, title: str | None = None,
@@ -79,6 +81,8 @@ class Transcriber:
                         duration_s=duration_s, recorded_at=recorded_at)
                 notes.update(self.cfg, path.stem, error="")
                 self.last_message = f"Transcribed {self.current_title}"
+                if self.after:
+                    self.after(path.stem)
             except Exception as e:
                 log.exception("transcription failed: %s", path.name)
                 notes.update(self.cfg, path.stem, error=f"Transcription failed: {e}")
@@ -98,6 +102,82 @@ class Transcriber:
                 "pending": list(self.pending),
                 "message": self.last_message,
             }
+
+
+class Summarizer:
+    """
+    Writes AI notes, one meeting at a time, with whichever provider is set in
+    Settings → AI. Like transcription it runs in the background, and a
+    failure is recorded on the note instead of disappearing.
+    """
+
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+        self.q: queue.Queue = queue.Queue()
+        self.lock = threading.Lock()
+        self.pending: list[str] = []
+        self.current = ""
+        self.current_title = ""
+        self.last_message = ""
+        threading.Thread(target=self._work, daemon=True).start()
+
+    def enqueue(self, note_id: str) -> bool:
+        with self.lock:
+            if note_id == self.current or note_id in self.pending:
+                return False
+            self.pending.append(note_id)
+        log.info("queued for AI notes: %s", note_id)
+        self.q.put(note_id)
+        return True
+
+    def auto(self, note_id: str) -> None:
+        if self.cfg.ai_enabled and self.cfg.ai.get("auto_summarize", True):
+            self.enqueue(note_id)
+
+    def _work(self) -> None:
+        while True:
+            nid = self.q.get()
+            n = notes.load(self.cfg, nid)
+            with self.lock:
+                if nid in self.pending:
+                    self.pending.remove(nid)
+                self.current = nid if n else ""
+                self.current_title = (n or {}).get("title") or nid
+            if not n:
+                continue
+            try:
+                tpath = notes.transcript_path(self.cfg, n)
+                transcript = tpath.read_text(encoding="utf-8", errors="replace") if tpath.exists() else ""
+                text = ai.summarize(
+                    self.cfg, n.get("title") or "", n.get("created_at", "")[:16].replace("T", " "),
+                    transcript, n.get("notes") or "", ", ".join(n.get("attendees") or []))
+                name, pc = ai.provider_cfg(self.cfg)
+                fields = {"summary": text, "summary_error": "",
+                          "summary_meta": {"provider": name, "model": pc.get("model") or "",
+                                           "at": datetime.now().isoformat(timespec="seconds")}}
+                # Keep Granola's original AI notes if these replace them.
+                if (n.get("summary_meta") or {}).get("provider") == "granola" and not n.get("granola_summary"):
+                    fields["granola_summary"] = n.get("summary", "")
+                notes.update(self.cfg, nid, **fields)
+                self.last_message = f"Wrote AI notes for {self.current_title}"
+            except ai.AIError as e:
+                notes.update(self.cfg, nid, summary_error=str(e))
+                self.last_message = f"AI notes for {self.current_title} failed: {e}"
+                log.warning("AI notes failed for %s: %s", nid, e)
+            except Exception as e:
+                log.exception("AI notes failed for %s", nid)
+                notes.update(self.cfg, nid, summary_error=str(e))
+                self.last_message = f"AI notes for {self.current_title} failed: {e}"
+            finally:
+                with self.lock:
+                    self.current = ""
+                    self.current_title = ""
+
+    def status(self) -> dict:
+        with self.lock:
+            return {"busy": bool(self.current), "id": self.current, "title": self.current_title,
+                    "queued": len(self.pending), "pending": list(self.pending),
+                    "message": self.last_message}
 
 
 class Recorder:
@@ -243,7 +323,7 @@ EDITABLE_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "whisper_model", "whisper_device",
     "me_label", "them_label", "mic_device", "auto_transcribe",
-    "delete_from_device",
+    "delete_from_device", "pocket_base_url", "usb_volume_label", "usb_record_dir",
 )
 
 
@@ -263,7 +343,11 @@ def _model_cached(cfg: Config) -> bool:
 def create_app(cfg: Config) -> tuple[Flask, Recorder]:
     app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="/static")
     trans = Transcriber(cfg)
+    summ = Summarizer(cfg)
+    trans.after = summ.auto
     rec = Recorder(cfg, trans)
+    importer = granola.Importer(cfg)
+    pocket_job = {"state": "idle", "message": ""}
 
     def authed() -> bool:
         token = request.args.get("token") or request.headers.get("X-Token", "")
@@ -288,6 +372,13 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         s = rec.status()
         s["transcriber"] = trans.status()
         s["transcriber"]["model_ready"] = _model_cached(cfg)
+        s["summarizer"] = summ.status()
+        s["ai"] = {"enabled": cfg.ai_enabled,
+                   "provider": cfg.ai.get("provider", "off"),
+                   "label": ai.describe(cfg) if cfg.ai_enabled else "",
+                   "local": cfg.ai.get("provider") in ai.LOCAL}
+        imp = importer.snapshot()
+        s["granola"] = {k: imp[k] for k in ("state", "done", "total", "message")}
         return jsonify(s)
 
     @app.post("/api/start")
@@ -334,13 +425,22 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         has_t = tpath.exists()
         d = {k: n.get(k) for k in
              ("id", "title", "created_at", "folder", "source", "duration_s", "error")}
+        s = summ.status()
         d.update(has_audio=has_audio, has_transcript=has_t,
-                 status=note_status(n, has_audio, has_t, t))
+                 status=note_status(n, has_audio, has_t, t),
+                 has_summary=bool(n.get("summary")),
+                 ai_status="writing" if s["id"] == n["id"]
+                 else "queued" if n["id"] in s["pending"] else "")
         if full:
             d["notes"] = n.get("notes") or ""
             d["transcript"] = (tpath.read_text(encoding="utf-8", errors="replace")
                                if has_t else "")
             d["me_label"] = cfg.me_label
+            d["summary"] = n.get("summary") or ""
+            d["summary_meta"] = n.get("summary_meta") or {}
+            d["summary_error"] = n.get("summary_error") or ""
+            d["attendees"] = n.get("attendees") or []
+            d["granola"] = {k: (n.get("granola") or {}).get(k) for k in ("url", "transcript_error")}
         return d
 
     @app.get("/api/notes")
@@ -467,8 +567,14 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             # Never echo the key itself back to a browser — only whether one
             # is stored, so the form can say "saved".
             "pocket_key_set": bool(cfg.pocket_api_key),
+            "pocket_base_url": cfg.pocket_base_url,
+            "usb_volume_label": cfg.usb_volume_label,
+            "usb_record_dir": cfg.usb_record_dir,
             "server_port": cfg.server_port,
             "app_root": str(APP_ROOT),
+            "ai": config_mod.redacted(cfg.ai),
+            "ai_env_keys": {p: bool(ai.api_key(p, {})) for p in ai.PROVIDERS},
+            "granola": config_mod.redacted(cfg.granola),
         })
 
     @app.post("/api/config")
@@ -485,6 +591,19 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         if str(data.get("recordings_dir", "")).strip():
             cfg.recordings_dir = config_mod.resolve_dir(data["recordings_dir"])
             cfg.recordings_dir.mkdir(parents=True, exist_ok=True)
+        if isinstance(data.get("ai"), dict):
+            update = dict(data["ai"])
+            if "providers" in update:  # only providers we know, only as objects
+                given = update["providers"] if isinstance(update["providers"], dict) else {}
+                update["providers"] = {k: v for k, v in given.items()
+                                       if k in ai.PROVIDERS and isinstance(v, dict)}
+            config_mod.apply_update(cfg.ai, AI_DEFAULTS, update)
+            if cfg.ai.get("provider") not in ("off", *ai.PROVIDERS):
+                cfg.ai["provider"] = "off"
+        if isinstance(data.get("granola"), dict):
+            config_mod.apply_update(cfg.granola, GRANOLA_DEFAULTS, data["granola"])
+            if cfg.granola.get("method") not in ("mcp", "api"):
+                cfg.granola["method"] = "mcp"
         config_mod.save(cfg)
         log.info("settings saved (recordings_dir=%s, mic=%r, model=%s, auto=%s)",
                  cfg.recordings_dir, cfg.mic_device, cfg.whisper_model,
@@ -559,6 +678,247 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         else:
             msg = f"Copied {n} recording{'s' if n != 1 else ''} from your Pocket."
         return jsonify({"ok": True, "message": msg})
+
+    # --- AI notes and Ask -----------------------------------------------------
+
+    @app.post("/api/notes/<note_id>/summarize")
+    def summarize_note(note_id: str):
+        n = notes.load(cfg, note_id)
+        if n is None:
+            return fail(404, "No such note.")
+        if not cfg.ai_enabled:
+            return fail(400, "AI is turned off. Pick a provider in Settings → AI.")
+        has_t = notes.transcript_path(cfg, n).exists()
+        if not has_t and not (n.get("notes") or "").strip():
+            return fail(400, "There's no transcript or notes to write AI notes from yet.")
+        queued = summ.enqueue(note_id)
+        return jsonify({"ok": True, "message": "Writing AI notes…" if queued else "Already writing."})
+
+    _STOP = set("the a an and or of to in on for with about what when who whom which how did do does "
+                "is are was were be been my me i we our you your it this that these those from at by "
+                "any all have has had can could should would will there their them they list tell "
+                "show give find any recent meeting meetings".split())
+
+    def gather_context(question: str, budget: int) -> tuple[str, list[str]]:
+        """Pick meetings for a question across all notes: keyword hits first,
+        then the most recent ones, within the provider's input budget."""
+        all_n = notes.all_notes(cfg)
+        words = [w for w in re.findall(r"[a-z0-9][a-z0-9'’-]{2,}", question.lower()) if w not in _STOP]
+        texts, scored = {}, []
+        for n in all_n:
+            t = notes.transcript_path(cfg, n)
+            transcript = t.read_text(encoding="utf-8", errors="replace") if t.exists() else ""
+            texts[n["id"]] = transcript
+            if words:
+                hay = " ".join([n.get("title") or "", n.get("notes") or "",
+                                n.get("summary") or "", transcript]).lower()
+                score = sum(hay.count(w) for w in words) + \
+                    5 * sum((n.get("title") or "").lower().count(w) for w in words)
+                if score:
+                    scored.append((score, n))
+        picks = [n for _, n in sorted(scored, key=lambda x: -x[0])[:8]]
+        recent = all_n[: int(cfg.ai.get("ask_recent_meetings") or 15)]
+        chosen, seen = [], set()
+        for n in picks + recent:
+            if n["id"] not in seen:
+                seen.add(n["id"])
+                chosen.append(n)
+        if not chosen:
+            return "(No meetings yet.)", []
+        per = max(3000, budget // len(chosen))
+        blocks, used, sources = [], 0, []
+        for n in chosen:
+            block = ai.meeting_block(n, texts.get(n["id"], ""), min(per, budget - used))
+            if used + len(block) > budget:
+                break
+            blocks.append(block)
+            used += len(block)
+            sources.append({"id": n["id"], "title": n.get("title") or "Untitled meeting"})
+        return "\n\n".join(blocks), sources
+
+    @app.post("/api/ask")
+    def ask_():
+        data = request.get_json(silent=True) or {}
+        question = str(data.get("question", "")).strip()[:4000]
+        if not question:
+            return fail(400, "Ask a question first.")
+        if not cfg.ai_enabled:
+            return fail(400, "AI is turned off. Pick a provider in Settings → AI.")
+        history = data.get("history") if isinstance(data.get("history"), list) else []
+        budget = ai.context_budget(cfg)
+        nid = data.get("note_id")
+        if nid:
+            n = notes.load(cfg, str(nid))
+            if n is None:
+                return fail(404, "No such note.")
+            t = notes.transcript_path(cfg, n)
+            context = ai.meeting_block(
+                n, t.read_text(encoding="utf-8", errors="replace") if t.exists() else "", budget)
+            sources = [{"id": n["id"], "title": n.get("title") or "Untitled meeting"}]
+        else:
+            context, sources = gather_context(question, budget)
+        try:
+            answer = ai.ask(cfg, question, context, history)
+        except ai.AIError as e:
+            return fail(502, str(e))
+        except Exception as e:
+            log.exception("ask failed")
+            return fail(502, f"Something went wrong asking the AI: {e}")
+        return jsonify({"ok": True, "answer": answer, "sources": sources,
+                        "provider": ai.describe(cfg)})
+
+    @app.get("/api/ai/defaults")
+    def ai_defaults():
+        return jsonify({"providers": ai.PROVIDERS, "local": sorted(ai.LOCAL),
+                        "summary_prompt": ai.DEFAULT_SUMMARY_PROMPT,
+                        "chat_prompt": ai.DEFAULT_CHAT_PROMPT,
+                        "defaults": config_mod.redacted(AI_DEFAULTS["providers"])})
+
+    @app.post("/api/ai/models")
+    def ai_models():
+        provider = str((request.get_json(silent=True) or {}).get("provider", ""))
+        if provider not in ai.PROVIDERS:
+            return fail(400, "Unknown provider.")
+        try:
+            return jsonify({"ok": True, "models": ai.list_models(cfg, provider)})
+        except ai.AIError as e:
+            return fail(502, str(e))
+
+    @app.post("/api/ai/test")
+    def ai_test():
+        provider = str((request.get_json(silent=True) or {}).get("provider", ""))
+        if provider not in ai.PROVIDERS:
+            return fail(400, "Unknown provider.")
+        try:
+            reply = ai.test(cfg, provider)
+        except ai.AIError as e:
+            return fail(502, str(e))
+        except Exception as e:
+            log.exception("AI test failed")
+            return fail(502, str(e))
+        return jsonify({"ok": True, "message": f"Connected to {ai.describe(cfg, provider)}. "
+                                               f"It replied: “{reply}”"})
+
+    # --- Granola import ------------------------------------------------------
+
+    def redirect_uri() -> str:
+        host = cfg.granola.get("redirect_host") or "127.0.0.1"
+        return f"http://{host}:{cfg.server_port}/oauth/granola/callback"
+
+    @app.get("/api/granola/status")
+    def granola_status():
+        auth = granola.load_auth()
+        return jsonify({**importer.snapshot(),
+                        "signed_in": bool(auth.get("access_token")),
+                        "signed_in_at": auth.get("signed_in_at", ""),
+                        "method": cfg.granola.get("method", "mcp"),
+                        "api_key_set": bool(cfg.granola.get("api_key")
+                                            or os.environ.get("GRANOLA_API_KEY")),
+                        "imported_total": sum(1 for _ in cfg.notes_dir.glob("granola-*.json"))})
+
+    @app.post("/api/granola/signin")
+    def granola_signin():
+        try:
+            url = granola.begin_sign_in(cfg, redirect_uri())
+        except granola.GranolaError as e:
+            return fail(502, str(e))
+        return jsonify({"ok": True, "url": url})
+
+    @app.get("/oauth/granola/callback")
+    def granola_callback():
+        # Not under /api: Granola's sign-in page redirects the browser here.
+        # The one-time state value ties it to a sign-in this app started.
+        page = ("<!doctype html><meta charset=utf-8><title>Scribe</title>"
+                "<body style='font:16px system-ui;padding:40px;background:#262624;color:#ecebe6'>"
+                "<h2 style='font-family:Georgia,serif;font-weight:500'>{title}</h2><p>{body}</p>")
+        if request.args.get("error"):
+            return Response(page.format(title="Granola sign-in didn't finish",
+                                        body=f"Granola said: {request.args.get('error')}. "
+                                             "Go back to Scribe and try again."), mimetype="text/html")
+        try:
+            granola.finish_sign_in(request.args.get("code", ""), request.args.get("state", ""))
+        except granola.GranolaError as e:
+            return Response(page.format(title="Granola sign-in didn't finish", body=str(e)),
+                            mimetype="text/html"), 400
+        importer.start()
+        return Response(page.format(
+            title="Signed in to Granola",
+            body="Scribe is importing your meetings now. You can close this window and "
+                 "watch the progress in Scribe's settings."), mimetype="text/html")
+
+    @app.post("/api/granola/signout")
+    def granola_signout():
+        granola.clear_auth()
+        return jsonify({"ok": True})
+
+    @app.post("/api/granola/import")
+    def granola_import():
+        refresh = bool((request.get_json(silent=True) or {}).get("refresh"))
+        if cfg.granola.get("method", "mcp") == "mcp" and not granola.load_auth().get("access_token"):
+            return fail(400, "Sign in to Granola first.")
+        ok, msg = importer.start(refresh=refresh)
+        return jsonify({"ok": ok, "message": msg}), (200 if ok else 409)
+
+    @app.post("/api/granola/stop")
+    def granola_stop():
+        importer.stop()
+        return jsonify({"ok": True})
+
+    # --- Pocket --------------------------------------------------------------
+
+    @app.get("/api/pocket/status")
+    def pocket_status():
+        from .usb_ingest import find_pocket_drive
+        drive = find_pocket_drive(cfg.usb_volume_label, cfg.usb_record_dir)
+        return jsonify({"usb": str(drive) if drive else "",
+                        "cloud_enabled": cfg.pocket_enabled,
+                        "key_set": bool(cfg.pocket_api_key),
+                        "cloud_job": dict(pocket_job)})
+
+    def pocket_cloud_import(days: int) -> None:
+        from .pocket_client import PocketClient, PocketError
+        try:
+            client = PocketClient(cfg.pocket_api_key, base_url=cfg.pocket_base_url)
+            start = (date.today() - timedelta(days=days)).isoformat()
+            recs, page = [], 1
+            while True:
+                batch = client.list_recordings(start_date=start, limit=100, page=page)
+                recs += batch
+                if len(batch) < 100:
+                    break
+                page += 1
+            new = 0
+            for r in recs:
+                nid = "pocket-cloud-" + re.sub(r"[^A-Za-z0-9_-]", "", r.id)
+                if notes.load(cfg, nid):
+                    continue
+                pocket_job["message"] = f"Downloading “{r.title}”…"
+                dest = client.download_audio(r.id, cfg.recordings_dir / f"{nid}.m4a")
+                notes.create(cfg, nid, title=r.title,
+                             created_at=granola._local_iso(r.recorded_at),
+                             audio=dest.name, source="pocket")
+                new += 1
+                if cfg.auto_transcribe:
+                    trans.enqueue(dest, title=r.title)
+            pocket_job.update(state="done", message=f"Imported {new} new recording"
+                              f"{'s' if new != 1 else ''} from Pocket's cloud "
+                              f"({len(recs) - new} already here).")
+        except PocketError as e:
+            pocket_job.update(state="error", message=f"Pocket: {e}")
+        except Exception as e:
+            log.exception("pocket cloud import failed")
+            pocket_job.update(state="error", message=str(e))
+
+    @app.post("/api/pocket/cloud-import")
+    def pocket_cloud():
+        if not cfg.pocket_enabled:
+            return fail(400, "Turn on Pocket cloud and add your Pocket API key first.")
+        if pocket_job.get("state") == "running":
+            return fail(409, "Already importing from Pocket.")
+        days = max(1, min(int((request.get_json(silent=True) or {}).get("days") or 30), 3650))
+        pocket_job.update(state="running", message="Asking Pocket for your recordings…")
+        threading.Thread(target=pocket_cloud_import, args=(days,), daemon=True).start()
+        return jsonify({"ok": True, "message": "Importing from Pocket's cloud…"})
 
     return app, rec
 

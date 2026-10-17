@@ -55,13 +55,16 @@ class PocketRecording:
 
 
 class PocketClient:
-    def __init__(self, api_key: str | None = None, timeout: int = 60):
+    def __init__(self, api_key: str | None = None, timeout: int = 60,
+                 base_url: str | None = None):
         self.api_key = api_key or os.environ.get("POCKET_API_KEY")
         if not self.api_key:
             raise PocketError(
                 "No API key. Set POCKET_API_KEY (a personal pk_... key, not an org key)."
             )
         self.timeout = timeout
+        # Configurable (Settings → Pocket) in case Pocket moves its API.
+        self.base_url = (base_url or BASE_URL).rstrip("/")
         self.s = requests.Session()
         self.s.headers.update(
             {
@@ -71,11 +74,11 @@ class PocketClient:
         )
 
     def _get(self, path: str, **params) -> dict:
-        r = self.s.get(f"{BASE_URL}{path}", params=params, timeout=self.timeout)
+        r = self.s.get(f"{self.base_url}{path}", params=params, timeout=self.timeout)
         return self._unwrap(r)
 
     def _post(self, path: str, payload: dict) -> dict:
-        r = self.s.post(f"{BASE_URL}{path}", json=payload, timeout=self.timeout)
+        r = self.s.post(f"{self.base_url}{path}", json=payload, timeout=self.timeout)
         return self._unwrap(r)
 
     @staticmethod

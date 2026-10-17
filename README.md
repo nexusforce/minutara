@@ -121,8 +121,10 @@ grouped by day, each labelled when it's still recording, transcribing, or
 not transcribed yet. **New note** (top right) starts recording straight
 away; the ↓ button pulls new recordings off your Pocket.
 
-A note has a title, chips for date, length, source and folder, and two tabs:
+A note has a title, chips for date, length, source and folder, and three tabs:
 
+- **AI notes** — Granola-style "enhanced" notes: topics, decisions and next
+  steps written from the transcript and your rough notes (see below).
 - **My notes** — type while the meeting runs; it saves as you go.
 - **Transcript** — drawn as a conversation, you on the right and them on
   the left (the stereo recording knows who said what). Click any timestamp
@@ -149,9 +151,72 @@ the Pocket, or older versions of Scribe) show up as notes automatically.
 Each note is a small JSON file in `notes/`; audio and transcripts stay where
 they always were.
 
-What Scribe deliberately doesn't copy from Granola: calendar sync, sharing,
-billing, and AI-written meeting summaries (those need a language model —
-local or cloud — which is a separate decision).
+What Scribe deliberately doesn't copy from Granola: calendar sync, sharing
+and billing.
+
+## AI notes and Ask
+
+Off until you pick a provider in **Settings → AI notes & Ask**:
+
+| Provider | Where your transcript goes | Notes |
+|---|---|---|
+| Claude (Anthropic) | Anthropic | Official SDK. Default model `claude-opus-5-5`, effort `medium`, automatic refusal fallback |
+| OpenAI | OpenAI | Official SDK, Responses API (Chat Completions selectable) |
+| Google Gemini | Google | REST; default model `gemini-flash-latest`, which tracks Google's newest Flash |
+| Ollama | **Nowhere** — runs on this computer | Install Ollama, `ollama pull llama3.2:3b` (or any model), pick it in Settings |
+| OpenAI-compatible | The server you set | LM Studio, OpenRouter, vLLM, gateways… |
+
+Each provider keeps its own key, model and limits, so switching doesn't lose
+anything. **Fetch models** lists what your key can actually use and **Test**
+sends a one-line message, so a renamed model shows up immediately rather than
+mid-meeting. Keys can also come from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or
+`GEMINI_API_KEY`.
+
+With a provider on, AI notes are written automatically after each transcript
+(or press **Generate** on a note), and an **Ask anything** box appears at the
+bottom of Home and of every note — like Granola's. On a note it answers about
+that meeting (try "Write follow-up email"); on Home it reads your recent
+meetings plus any that match the question, and links the ones it used.
+
+Meetings longer than a model can read at once (small local models,
+especially) are summarized in parts and then combined — never silently cut.
+Both prompts are editable under **Prompts**; leave them blank to keep
+Scribe's built-in ones.
+
+Everything that talks to the outside world — addresses, model names, API
+style, output-limit parameter, timeouts, input budgets, Ollama's context
+window — is a setting (Settings → Advanced, or the `ai` section of
+`config.json`), so a provider changing its API is a settings change, not a
+code change.
+
+## Moving from Granola
+
+**Settings → Import from Granola** copies your history into Scribe so nothing
+is lost when you cancel: titles, dates, attendees, folders, Granola's AI
+notes, your own typed notes and full transcripts (Granola keeps no audio, so
+there's none to copy).
+
+- **Sign in with Granola** (default) uses Granola's official MCP server: a
+  browser window opens, you approve, and the import starts by itself. Works on
+  Granola's paid plans. Do this on the computer running Scribe.
+- **Granola API key** uses Granola's Personal API (`grn_…` keys need a
+  Business or Enterprise plan).
+
+Pick "Ones I recorded or attended" or "Everything I can see", and a start
+date. Running the import again only adds new meetings, so an interrupted
+import just continues; **Re-import** refreshes everything but keeps notes
+you've typed in Scribe. Meetings whose transcript Granola won't release are
+still imported, with the reason listed. Granola's raw responses are also kept
+in `granola_archive/`, so even fields Scribe doesn't show are preserved.
+
+## Pocket
+
+The ↓ button on Home (or **Settings → Pocket → Pull recordings**) copies new
+recordings off the Pocket over USB-C — turn on USB Mode in the Pocket app
+first. Settings shows whether the drive is connected, and lets you change the
+drive name and folder if Pocket ever renames them. With **Pocket cloud** on
+and your key added, **Import from Pocket's cloud** downloads recordings from
+your Pocket account too; the API address is a setting as well.
 
 ## The phone remote
 
@@ -179,8 +244,9 @@ to **off**:
 | `prefer_pocket_transcripts` | Use Pocket's transcription instead of local Whisper |
 | `delete_from_device` | Remove files from the device after a verified copy |
 
-`config.json` is gitignored because it holds your Pocket API key and the
-remote's auth token. Don't commit it.
+`config.json` is gitignored because it holds your API keys (Pocket, AI
+providers, Granola) and the remote's auth token. Don't commit it. Your
+Granola sign-in lives in `granola_auth.json`, also gitignored.
 
 For the Pocket API, use a **personal** key (`pk_...` from Settings →
 Developer → API Keys) — organization keys are rejected by the upload endpoint.

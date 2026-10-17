@@ -104,6 +104,14 @@
         <div class="work" id="work" hidden><span class="lamp busy"></span><span id="work-text"></span></div>
         <div class="list" id="list"></div>
       </div>
+
+      <div class="dock" id="home-dock">
+        <form class="askbox" data-scope="home" hidden>
+          <input name="q" placeholder="Ask anything about your meetings" autocomplete="off" aria-label="Ask about your meetings">
+          <button type="button" class="ask-chip" data-prompt="List my open to-dos from recent meetings, grouped by meeting.">List recent to-dos</button>
+          <button type="submit" class="ask-go" aria-label="Ask"><i data-i="up"></i></button>
+        </form>
+      </div>
     </section>
 
     <!-- Note ------------------------------------------------------------->
@@ -125,7 +133,7 @@
       </div>
 
       <div class="page note-page">
-        <input class="note-title serif" id="n-title" placeholder="New note" autocomplete="off" aria-label="Title">
+        <textarea class="note-title serif" id="n-title" rows="1" placeholder="New note" autocomplete="off" aria-label="Title"></textarea>
         <div class="chips">
           <span class="chip" id="n-date"><i data-i="calendar"></i><span></span></span>
           <span class="chip" id="n-dur"><i data-i="clock"></i><span></span></span>
@@ -134,10 +142,15 @@
         </div>
 
         <div class="seg" role="tablist">
+          <button role="tab" data-tab="ai" aria-selected="false"><i data-i="sparkle"></i>AI notes</button>
           <button role="tab" data-tab="notes" aria-selected="true">My notes</button>
           <button role="tab" data-tab="transcript" aria-selected="false">Transcript</button>
         </div>
 
+        <div id="tab-ai" hidden>
+          <div class="ai-head" id="ai-head"></div>
+          <div class="md" id="n-summary"></div>
+        </div>
         <div id="tab-notes">
           <textarea class="note-body" id="n-body" placeholder="Write notes…" aria-label="Your notes"></textarea>
         </div>
@@ -146,7 +159,16 @@
         </div>
       </div>
 
-      <div class="dock" id="dock" hidden><div class="dock-pill" id="dock-pill"></div></div>
+      <div class="dock" id="dock">
+        <div class="dock-row">
+          <div class="dock-pill" id="dock-pill" hidden></div>
+          <form class="askbox" data-scope="note" hidden>
+            <input name="q" placeholder="Ask about this meeting" autocomplete="off" aria-label="Ask about this meeting">
+            <button type="button" class="ask-chip" data-prompt="Write a short, friendly follow-up email to the attendees: thank them, recap the decisions and list each action item with its owner.">Write follow-up email</button>
+            <button type="submit" class="ask-go" aria-label="Ask"><i data-i="up"></i></button>
+          </form>
+        </div>
+      </div>
       <audio id="player" preload="metadata"></audio>
     </section>
 
@@ -209,8 +231,90 @@
           </div>
         </div>
 
-        <h2 class="group">Pocket</h2>
+        <h2 class="group" id="s-ai">AI notes &amp; Ask</h2>
         <div class="card rows">
+          <div class="srow">
+            <div class="stext"><b>AI provider</b><small id="ai-where">Off: nothing is sent anywhere for AI.</small></div>
+            <select class="sel" id="ai-provider" aria-label="AI provider">
+              <option value="off">Off</option>
+              <option value="anthropic">Claude (Anthropic)</option>
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="ollama">Ollama (local, private)</option>
+              <option value="compatible">Other OpenAI-compatible</option>
+            </select>
+          </div>
+          <div id="ai-fields"></div>
+          <div class="srow" data-ai-on>
+            <div class="stext"><b>Write AI notes automatically</b><small>After each transcript finishes. When off, use “Generate” on a note.</small></div>
+            <label class="switch"><input type="checkbox" data-ai="auto_summarize"><span></span></label>
+          </div>
+          <div class="srow" data-ai-on>
+            <div class="stext"><b>Meetings “Ask” looks across</b><small>From Home, Ask reads your most recent meetings plus any that match your question.</small></div>
+            <input class="field num" type="number" min="1" max="200" data-ai="ask_recent_meetings" aria-label="Recent meetings">
+          </div>
+          <details class="adv" data-ai-on>
+            <summary>Prompts</summary>
+            <div class="srow col">
+              <div class="stext"><b>AI notes prompt</b><small>Leave blank to use Scribe's built-in prompt (shown greyed out). {me} becomes your speaker name.</small></div>
+              <textarea class="field area" data-ai="summary_prompt" id="ai-sp" spellcheck="false"></textarea>
+            </div>
+            <div class="srow col">
+              <div class="stext"><b>Ask prompt</b><small>Leave blank for the built-in prompt.</small></div>
+              <textarea class="field area" data-ai="chat_prompt" id="ai-cp" spellcheck="false"></textarea>
+            </div>
+          </details>
+        </div>
+
+        <h2 class="group" id="s-granola">Import from Granola</h2>
+        <div class="card rows">
+          <div class="srow">
+            <div class="stext"><b>How to connect</b><small>Signing in works on Granola's paid plans. API keys need a Business or Enterprise plan.</small></div>
+            <select class="sel" data-gr="method" aria-label="Granola connection">
+              <option value="mcp">Sign in with Granola</option>
+              <option value="api">Granola API key</option>
+            </select>
+          </div>
+          <div class="srow" data-gm="mcp">
+            <div class="stext"><b>Granola account</b><small id="gr-account">Not signed in</small></div>
+            <div class="btns"><button class="btn" id="gr-signin">Sign in</button><button class="btn ghost" id="gr-signout" hidden>Sign out</button></div>
+          </div>
+          <div class="srow" data-gm="api">
+            <div class="stext"><b>Granola API key</b><small>Starts with grn_. In Granola: Settings → API.</small></div>
+            <input class="field wide" type="password" data-gr="api_key" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Which meetings</b></div>
+            <select class="sel" data-gr="scope" aria-label="Which meetings">
+              <option value="mine">Ones I recorded or attended</option>
+              <option value="all">Everything I can see in Granola</option>
+            </select>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Starting from</b><small>Meetings before this date are skipped.</small></div>
+            <input class="field" type="date" data-gr="since" aria-label="Import since">
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Import</b><small id="gr-msg">Copies titles, attendees, Granola's AI notes, your notes and full transcripts. Running it again only adds what's new.</small>
+              <div class="bar" id="gr-bar" hidden><span></span></div></div>
+            <div class="btns"><button class="btn primary" id="gr-import">Import meetings</button><button class="btn" id="gr-stop" hidden>Stop</button></div>
+          </div>
+          <div class="gr-errors" id="gr-errors" hidden></div>
+          <details class="adv">
+            <summary>Advanced</summary>
+            <div class="srow"><div class="stext"><b>Granola MCP address</b></div><input class="field wide" data-gr="mcp_url" spellcheck="false"></div>
+            <div class="srow"><div class="stext"><b>Granola API address</b></div><input class="field wide" data-gr="api_base" spellcheck="false"></div>
+            <div class="srow"><div class="stext"><b>OAuth client ID</b><small>Only if Granola gives you a fixed one. Blank registers Scribe automatically.</small></div><input class="field wide" data-gr="client_id" spellcheck="false"></div>
+            <div class="srow"><div class="stext"><b>Re-import everything</b><small>Refreshes meetings already imported (keeps notes you've typed in Scribe).</small></div><button class="btn" id="gr-reimport">Re-import</button></div>
+          </details>
+        </div>
+
+        <h2 class="group" id="s-pocket">Pocket</h2>
+        <div class="card rows">
+          <div class="srow">
+            <div class="stext"><b>Pocket recorder (USB)</b><small id="pk-usb">Looking for your Pocket…</small></div>
+            <button class="btn" id="pk-pull"><i data-i="download"></i>Pull recordings</button>
+          </div>
           <div class="srow">
             <div class="stext"><b>Delete from the device after copying</b><small>Only after the copy is verified. Off keeps your Pocket's originals.</small></div>
             <label class="switch"><input type="checkbox" data-key="delete_from_device"><span></span></label>
@@ -228,9 +332,19 @@
             <label class="switch"><input type="checkbox" data-key="prefer_pocket_transcripts"><span></span></label>
           </div>
           <div class="srow">
-            <div class="stext"><b>API key</b><small>Stored only in config.json on this computer</small></div>
+            <div class="stext"><b>Pocket API key</b><small>Stored only in config.json on this computer</small></div>
             <input class="field wide" type="password" id="s-key" data-key="pocket_api_key" autocomplete="off" spellcheck="false">
           </div>
+          <div class="srow">
+            <div class="stext"><b>Import from Pocket's cloud</b><small id="pk-cloud-msg">Downloads recordings from your Pocket account (needs Pocket cloud and a key)</small></div>
+            <div class="btns"><input class="field num" type="number" id="pk-days" min="1" max="3650" value="30" aria-label="Days back"><span class="unit">days</span><button class="btn" id="pk-cloud">Import</button></div>
+          </div>
+          <details class="adv">
+            <summary>Advanced</summary>
+            <div class="srow"><div class="stext"><b>Drive name</b><small>The volume label your Pocket shows up as</small></div><input class="field" data-key="usb_volume_label" spellcheck="false"></div>
+            <div class="srow"><div class="stext"><b>Recordings folder on the drive</b></div><input class="field" data-key="usb_record_dir" spellcheck="false"></div>
+            <div class="srow"><div class="stext"><b>Pocket API address</b></div><input class="field wide" data-key="pocket_base_url" spellcheck="false"></div>
+          </details>
         </div>
 
         <h2 class="group">Phone remote</h2>
@@ -263,6 +377,16 @@
     <header><span id="modal-title"></span><button class="icon-btn" id="modal-close" aria-label="Close"><i data-i="x"></i></button></header>
     <div class="sheet-body" id="modal-body"></div>
   </div>
+</div>
+<div class="chat" id="chat" hidden>
+  <header>
+    <span class="chat-title"><i data-i="sparkle"></i><span id="chat-title">Ask</span></span>
+    <span class="chat-prov" id="chat-prov"></span>
+    <button class="icon-btn" id="chat-clear" title="New conversation" aria-label="New conversation"><i data-i="refresh"></i></button>
+    <button class="icon-btn" id="chat-close" aria-label="Close"><i data-i="x"></i></button>
+  </header>
+  <div class="chat-body" id="chat-body"></div>
+  <div class="chat-chips" id="chat-chips"></div>
 </div>
 <div class="toast" id="toast" role="status" hidden></div>
 

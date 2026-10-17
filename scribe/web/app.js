@@ -53,7 +53,11 @@ const ICONS = {
   list: '<path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/>',
   power: '<path d="M12 3.5v8"/><path d="M6.6 7a7.5 7.5 0 1 0 10.8 0"/>',
   refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
+  sparkle: '<path d="M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
+  up: '<path d="M12 19V6M6.5 11.5 12 6l5.5 5.5"/>',
+  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/>',
 };
+const SOURCE = { pocket: "Pocket", granola: "Granola", pc: "This PC" };
 const FILLED = new Set(["more", "stop", "play"]);
 function icon(name) {
   const attrs = FILLED.has(name)
@@ -101,6 +105,7 @@ const LIVE = ["recording", "paused", "saving"];
 const S = {
   status: null, route: { view: "home" }, folders: [], config: null,
   noteId: null, note: null, lastSig: "", scrubbing: false, refreshT: null,
+  ai: { enabled: false, label: "" }, tab: "notes",
 };
 const player = $("#player");
 
@@ -190,6 +195,7 @@ async function route() {
   clearTimeout(qT);  // a half-typed search must not yank you off this page
   closeSide(); closeMenu();
   if (prev.view === "note" && (S.route.view !== "note" || S.route.id !== prev.id)) leaveNote();
+  if (prev.view !== S.route.view || prev.id !== S.route.id) resetChat();
   for (const v of ["home", "note", "settings"]) $("#view-" + v).hidden = S.route.view !== v;
   if (S.route.view !== "home" || S.route.folder) $("#q").value = "";
   markNav();
@@ -213,17 +219,23 @@ async function poll() {
   try { s = await getJSON("/api/status"); } catch { $("#offline").hidden = false; return; }
   $("#offline").hidden = true;
   S.status = s;
-  const t = s.transcriber || {};
+  const t = s.transcriber || {}, sm = s.summarizer || {}, gr = s.granola || {};
+  S.ai = s.ai || { enabled: false };
+  const importing = ["listing", "importing"].includes(gr.state);
   document.body.dataset.rec = s.state;
-  document.body.classList.toggle("working", !!t.busy && !LIVE.includes(s.state));
+  document.body.classList.toggle("working",
+    (!!t.busy || !!sm.busy || importing) && !LIVE.includes(s.state));
   const cloud = $("#cloud-state");
-  cloud.textContent = s.push_to_pocket ? "Pocket cloud on" : "Local only";
-  cloud.classList.toggle("cloud", !!s.push_to_pocket);
+  const sends = s.push_to_pocket || (S.ai.enabled && !S.ai.local);
+  cloud.textContent = S.ai.enabled ? `AI: ${S.ai.label}` : s.push_to_pocket ? "Pocket cloud on" : "Local only";
+  cloud.classList.toggle("cloud", !!sends);
+  $$(".askbox").forEach(f => { f.hidden = !S.ai.enabled; });
   renderNow();
   if (S.route.view === "note") renderDock();
 
   // Something changed (a recording saved, a transcript finished): refresh.
-  const sig = [s.state, s.note_id, t.name, t.queued, t.message, s.message].join("|");
+  const sig = [s.state, s.note_id, t.name, t.queued, t.message, s.message,
+               sm.id, sm.queued, sm.message, gr.state, Math.floor((gr.done || 0) / 10)].join("|");
   if (sig !== S.lastSig) {
     const first = !S.lastSig;
     S.lastSig = sig;
@@ -264,14 +276,21 @@ function renderNow() {
       ? `The last recording failed: ${s.message}`
       : "Records your microphone and your computer's audio, entirely on this machine.";
   }
-  const t = s.transcriber || {};
-  $("#work").hidden = !t.busy;
+  const t = s.transcriber || {}, sm = s.summarizer || {}, gr = s.granola || {};
+  const lines = [];
   if (t.busy) {
     let text = `Transcribing “${t.title || t.name}”`;
     if (t.queued) text += ` · ${t.queued} more queued`;
     if (!t.model_ready) text += " · the first run downloads the speech model, so this one takes a while";
-    $("#work-text").textContent = text;
+    lines.push(text);
   }
+  if (sm.busy) lines.push(`Writing AI notes for “${sm.title}”` + (sm.queued ? ` · ${sm.queued} more queued` : ""));
+  if (["listing", "importing"].includes(gr.state)) {
+    lines.push(gr.state === "listing" ? "Finding your Granola meetings…"
+      : `Importing from Granola · ${gr.done} of ${gr.total}`);
+  }
+  $("#work").hidden = !lines.length;
+  $("#work-text").textContent = lines.join("  ·  ");
 }
 
 async function loadHome() {
@@ -302,8 +321,9 @@ function renderList(list, q, folder) {
     const d = new Date(n.created_at);
     const label = dayLabel(d);
     if (label !== last) { out += `<div class="day">${esc(label)}</div>`; last = label; }
-    const [stText, stCls] = STATUS[n.status] || ["", ""];
-    const sub = [n.source === "pocket" ? "Pocket" : "This PC", fmtDur(n.duration_s), n.folder]
+    let [stText, stCls] = STATUS[n.status] || ["", ""];
+    if (!stText && n.ai_status) [stText, stCls] = [n.ai_status === "writing" ? "Writing AI notes…" : "AI notes queued", "busy"];
+    const sub = [SOURCE[n.source] || "This PC", fmtDur(n.duration_s), n.folder]
       .filter(Boolean).join(" · ");
     const act = n.status === "audio" || n.status === "error"
       ? `<button class="row-act" data-transcribe="${esc(n.id)}">Transcribe</button>` : "";
@@ -357,12 +377,13 @@ $("#live-open").onclick = () => {
   if (S.status && S.status.note_id) location.hash = `#/note/${encodeURIComponent(S.status.note_id)}`;
 };
 
-$("#pull-btn").onclick = async () => {
+async function pullPocket() {
   toast("Looking for your Pocket…");
   const r = await send("POST", "/api/usb");
   toast(r.message || (r.ok ? "Done." : "Couldn't read your Pocket."));
   refreshSoon();
-};
+}
+$("#pull-btn").onclick = pullPocket;
 
 let qT;
 $("#q").addEventListener("input", () => {
@@ -423,15 +444,125 @@ async function openNote(id) {
   S.note = n;
   if (fresh) {
     $("#n-title").value = n.title || "";
+    requestAnimationFrame(() => autosize($("#n-title")));
     $("#n-body").value = n.notes || "";
     $("#saved").textContent = "";
-    setTab(n.has_transcript && !n.notes ? "transcript" : "notes");
+    resetChat();
+    setTab(n.summary ? "ai" : n.has_transcript && !n.notes ? "transcript" : "notes");
     if (!n.title && LIVE.includes(n.status)) $("#n-title").focus();
   }
   if (n.has_audio && !player.getAttribute("src")) player.src = withToken(noteUrl(id, "/audio"));
   renderNoteMeta(n);
+  renderSummary(n);
   renderTranscript(n);
   renderDock();
+}
+
+// AI notes tab — Granola's "enhanced notes", from the provider in Settings.
+function renderSummary(n) {
+  const head = $("#ai-head"), box = $("#n-summary");
+  const busy = n.ai_status;
+  const meta = n.summary_meta || {};
+  const fromGranola = meta.provider === "granola";
+  if (n.summary) {
+    const when = meta.at ? dayLabel(new Date(meta.at)) : "";
+    const by = fromGranola ? "Imported from Granola" : `Written by ${meta.model || meta.provider || "AI"}`;
+    head.innerHTML = `<span>${esc(by)}${when ? " · " + esc(when) : ""}</span><span class="grow"></span>` +
+      (busy ? `<span class="dock-tag"><span class="lamp busy"></span>Rewriting…</span>`
+        : (S.ai.enabled ? `<button class="btn sm" data-ai-act="gen">${icon("refresh")}Regenerate</button>` : "")) +
+      `<button class="btn sm" data-ai-act="copy">${icon("copy")}Copy</button>`;
+    if (box.dataset.for !== n.id + ":" + n.summary.length) {
+      box.innerHTML = md(n.summary);
+      box.dataset.for = n.id + ":" + n.summary.length;
+    }
+    if (n.summary_error && !busy) head.insertAdjacentHTML("beforeend",
+      `<div class="now-hint err" style="width:100%">Last attempt failed: ${esc(n.summary_error)}</div>`);
+    return;
+  }
+  head.innerHTML = "";
+  box.dataset.for = "";
+  let msg, btn = "";
+  if (busy) msg = busy === "writing" ? "Writing AI notes…" : "Queued. AI notes start when the current one finishes.";
+  else if (!S.ai.enabled) {
+    msg = "AI notes turn your transcript and rough notes into clean meeting notes, like Granola. " +
+          "Pick Claude, OpenAI, Gemini or a private local model in Settings.";
+    btn = `<a class="btn primary" href="#/settings" data-ai-act="setup">Set up AI notes</a>`;
+  } else if (!n.has_transcript && !(n.notes || "").trim()) {
+    msg = LIVE.includes(n.status) ? "AI notes are written after the recording is transcribed."
+      : "There's nothing to write notes from yet: no transcript or typed notes.";
+  } else {
+    msg = n.summary_error ? `Last attempt failed: ${n.summary_error}` : "No AI notes for this meeting yet.";
+    btn = `<button class="btn primary" data-ai-act="gen">${icon("sparkle")}Generate AI notes</button>`;
+  }
+  box.innerHTML = `<div class="t-empty"><p>${esc(msg)}</p>${btn}</div>`;
+}
+
+$("#tab-ai").addEventListener("click", async e => {
+  const b = e.target.closest("[data-ai-act]");
+  if (!b || !S.note) return;
+  if (b.dataset.aiAct === "setup") { setTimeout(() => $("#s-ai").scrollIntoView(), 300); return; }
+  if (b.dataset.aiAct === "copy") { copyText(S.note.summary, b); return; }
+  const r = await send("POST", noteUrl(S.noteId, "/summarize"));
+  toast(r.message || (r.ok ? "Writing AI notes…" : "Couldn't start AI notes."));
+  await poll();
+  refreshSoon();
+});
+
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {  // plain-HTTP pages don't always get the clipboard API
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }
+  if (btn) { const old = btn.innerHTML; btn.textContent = "Copied"; setTimeout(() => { btn.innerHTML = old; }, 1200); }
+}
+
+// A small, safe Markdown renderer: headings, nested lists, bold/italic,
+// inline code and http(s) links. Input is escaped before any markup is added.
+function mdInline(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\s(])[*_]([^*_\s][^*_]*?)[*_](?=[\s).,;:!?]|$)/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\u0001/g, "*");
+}
+function md(src) {
+  const lines = String(src || "").replace(/\r/g, "").split("\n");
+  let out = "", para = [];
+  const stack = [];
+  const flush = () => { if (para.length) { out += `<p>${mdInline(para.join(" "))}</p>`; para = []; } };
+  const close = (to = -1) => {
+    while (stack.length && stack[stack.length - 1].indent > to) out += `</li></${stack.pop().type}>`;
+  };
+  for (let raw of lines) {
+    raw = raw.replace(/\\\*/g, "\u0001").replace(/\\([^\w\s])/g, "$1");  // markdown escapes like \~
+    if (!raw.trim()) { flush(); continue; }
+    const h = raw.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
+    if (h) {
+      flush(); close();
+      const lvl = Math.min(h[1].length + 1, 4);
+      out += `<h${lvl}>${mdInline(h[2])}</h${lvl}>`;
+      continue;
+    }
+    const li = raw.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+    if (li) {
+      flush();
+      const indent = li[1].replace(/\t/g, "  ").length, type = /\d/.test(li[2]) ? "ol" : "ul";
+      close(indent);
+      const top = stack[stack.length - 1];
+      if (top && top.indent === indent) out += "</li><li>";
+      else { out += `<${type}><li>`; stack.push({ type, indent }); }
+      out += mdInline(li[3]);
+      continue;
+    }
+    if (stack.length && /^\s{2,}\S/.test(raw)) { out += `<div class="li-more">${mdInline(raw.trim())}</div>`; continue; }
+    close();
+    para.push(raw.trim());
+  }
+  flush(); close();
+  return out;
 }
 
 function renderNoteMeta(n) {
@@ -440,7 +571,7 @@ function renderNoteMeta(n) {
   const dur = fmtDur(n.duration_s);
   $("#n-dur").hidden = !dur;
   $("#n-dur span").textContent = dur;
-  $("#n-src span").textContent = n.source === "pocket" ? "Pocket" : "This PC";
+  $("#n-src span").textContent = SOURCE[n.source] || "This PC";
   renderFolderSelect(n.folder);
   const busy = ["transcribing", "queued", ...LIVE].includes(n.status);
   $("#m-audio").hidden = !n.has_audio;
@@ -476,22 +607,30 @@ $("#n-folder").onchange = async e => {
   await loadFolders();
 };
 
-$("#n-title").addEventListener("input", e => queueSave({ title: e.target.value }));
+$("#n-title").addEventListener("input", e => {
+  e.target.value = e.target.value.replace(/\n/g, " ");  // a title is one line, even if pasted
+  autosize(e.target);
+  queueSave({ title: e.target.value });
+});
+window.addEventListener("resize", () => { if (S.noteId) autosize($("#n-title")); });
 $("#n-title").addEventListener("keydown", e => {
   if (e.key === "Enter") { e.preventDefault(); setTab("notes"); $("#n-body").focus(); }
 });
 $("#n-body").addEventListener("input", e => { autosize(e.target); queueSave({ notes: e.target.value }); });
 
 function setTab(t) {
+  S.tab = t;
   $$(".seg [data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
+  $("#tab-ai").hidden = t !== "ai";
   $("#tab-notes").hidden = t !== "notes";
   $("#tab-transcript").hidden = t !== "transcript";
   if (t === "notes") autosize($("#n-body"));
 }
 $$(".seg [data-tab]").forEach(b => { b.onclick = () => setTab(b.dataset.tab); });
 
-// Transcript lines look like "[03:12] Me: words" — drawn as a conversation.
-const LINE = /^\[(\d+):(\d{2})\]\s+([^:]{1,40}):\s?(.*)$/;
+// Transcript lines look like "[03:12] Me: words" — or, from Granola, plain
+// "Kate Stobbe: words" — and are drawn as a conversation.
+const LINE = /^(?:\[(\d+):(\d{2})\]\s+)?([^:\[\]]{1,60}):\s?(.*)$/;
 function renderTranscript(n) {
   const box = $("#n-transcript");
   if (!n.has_transcript) {
@@ -516,13 +655,14 @@ function renderTranscript(n) {
     if (!raw.trim()) continue;
     const m = raw.match(LINE);
     if (!m) { out += `<div class="t-line">${esc(raw)}</div>`; prev = ""; continue; }
-    const secs = Number(m[1]) * 60 + Number(m[2]);
     const who = m[3].trim();
     const head = who !== prev ? `<div class="t-who">${esc(who)}</div>` : "";
     prev = who;
+    const ts = m[1] === undefined ? "" :
+      `<button class="t-ts" data-seek="${Number(m[1]) * 60 + Number(m[2])}" title="Play from here"` +
+      `${n.has_audio ? "" : " disabled"}>${esc(m[1].padStart(2, "0"))}:${m[2]}</button>`;
     out += `<div class="t-msg ${who.toLowerCase() === me ? "me" : "them"}">${head}` +
-      `<div class="t-bubble"><button class="t-ts" data-seek="${secs}" title="Play from here"` +
-      `${n.has_audio ? "" : " disabled"}>${esc(m[1].padStart(2, "0"))}:${m[2]}</button>${esc(m[4])}</div></div>`;
+      `<div class="t-bubble">${ts}${esc(m[4])}</div></div>`;
   }
   box.innerHTML = out;
 }
@@ -553,7 +693,8 @@ function renderDock() {
   if (live) mode = "live";
   else if (n.has_audio) mode = `player:${n.status}`;
   else mode = "none";
-  dock.hidden = mode === "none";
+  pill.hidden = mode === "none";
+  dock.hidden = pill.hidden && !S.ai.enabled;
   if (pill.dataset.mode !== mode) {
     pill.dataset.mode = mode;
     if (live) {
@@ -628,6 +769,78 @@ $("#m-delete").onclick = async () => {
   location.hash = "#/";
 };
 
+// --- Ask anything ---------------------------------------------------------------
+const chat = { history: [], busy: false };
+const CHIPS = {
+  note: [["Action items", "List every action item from this meeting with its owner."],
+         ["Follow-up email", "Write a short, friendly follow-up email to the attendees: thank them, recap the decisions and list each action item with its owner."],
+         ["Decisions", "What was decided in this meeting, and why?"]],
+  home: [["Recent to-dos", "List my open to-dos from recent meetings, grouped by meeting."],
+         ["This week", "Summarize what happened in my meetings this week."],
+         ["My commitments", "What did I commit to in recent meetings?"]],
+};
+const chatScope = () => (S.route.view === "note" ? "note" : "home");
+
+function resetChat() {
+  chat.history = [];
+  $("#chat-body").innerHTML = "";
+  $("#chat").hidden = true;
+}
+function openChat() {
+  const scope = chatScope();
+  $("#chat-title").textContent = scope === "note" ? "Ask about this meeting" : "Ask about your meetings";
+  $("#chat-prov").textContent = S.ai.label || "";
+  $("#chat-chips").innerHTML = chat.history.length || chat.busy ? "" : CHIPS[scope].map(([label, prompt]) =>
+    `<button class="ask-chip" data-prompt="${esc(prompt)}">${esc(label)}</button>`).join("");
+  $("#chat").hidden = false;
+}
+async function askQuestion(q) {
+  q = (q || "").trim();
+  if (!q || chat.busy) return;
+  if (!S.ai.enabled) { toast("Pick an AI provider in Settings first."); location.hash = "#/settings"; return; }
+  const scope = chatScope();
+  chat.busy = true;
+  openChat();
+  const body = $("#chat-body");
+  body.insertAdjacentHTML("beforeend", `<div class="chat-q">${esc(q)}</div>`);
+  const a = document.createElement("div");
+  a.className = "chat-a wait";
+  a.textContent = scope === "note" ? "Reading the meeting…" : "Reading your meetings…";
+  body.appendChild(a);
+  body.scrollTop = body.scrollHeight;
+  $$(".ask-go").forEach(b => { b.disabled = true; });
+  const r = await send("POST", "/api/ask", {
+    question: q, note_id: scope === "note" ? S.noteId : null, history: chat.history });
+  chat.busy = false;
+  $$(".ask-go").forEach(b => { b.disabled = false; });
+  if (!r.ok) { a.className = "chat-a err"; a.textContent = r.message || "Couldn't get an answer."; return; }
+  chat.history.push({ role: "user", content: q }, { role: "assistant", content: r.answer });
+  const srcs = scope === "home" && r.sources && r.sources.length
+    ? `<div class="chat-src">Looked at: ${r.sources.slice(0, 8).map(s =>
+        `<a href="#/note/${encodeURIComponent(s.id)}">${esc(s.title)}</a>`).join(", ")}` +
+      `${r.sources.length > 8 ? ` and ${r.sources.length - 8} more` : ""}</div>` : "";
+  a.className = "chat-a md";
+  a.innerHTML = md(r.answer) + srcs +
+    `<div class="chat-tools"><button class="btn sm" data-copy>${icon("copy")}Copy</button></div>`;
+  a.querySelector("[data-copy]").onclick = e => copyText(r.answer, e.currentTarget);
+  body.scrollTop = body.scrollHeight;
+}
+$$(".askbox").forEach(f => {
+  f.addEventListener("submit", e => {
+    e.preventDefault();
+    const input = f.querySelector("input");
+    askQuestion(input.value);
+    input.value = "";
+  });
+  f.querySelector(".ask-chip").onclick = e => askQuestion(e.currentTarget.dataset.prompt);
+});
+$("#chat-chips").addEventListener("click", e => {
+  const b = e.target.closest("[data-prompt]");
+  if (b) askQuestion(b.dataset.prompt);
+});
+$("#chat-close").onclick = () => { $("#chat").hidden = true; };
+$("#chat-clear").onclick = () => { if (!chat.busy) { resetChat(); openChat(); } };
+
 // --- settings -----------------------------------------------------------------
 async function loadSettings() {
   let c;
@@ -649,8 +862,252 @@ async function loadSettings() {
   key.placeholder = c.pocket_key_set ? "Saved. Type to replace it" : "pk_…";
   $("#s-root").textContent = `App folder: ${c.app_root}`;
   $("#s-theme").value = themePref();
+  if (!S.aiDefaults) { try { S.aiDefaults = await getJSON("/api/ai/defaults"); } catch {} }
+  renderAI();
+  renderGranola();
   loadDevices(c.mic_device);
+  pollSettings();
 }
+const reloadConfig = async () => { S.config = await getJSON("/api/config"); };
+async function saveConfig(body, msg = "Saved") {
+  const r = await send("POST", "/api/config", body);
+  if (!r.ok) { toast("Couldn't save that setting."); return false; }
+  if (msg) toast(msg);
+  return true;
+}
+
+// AI provider settings. Each provider keeps its own key, model and limits,
+// so switching back and forth doesn't lose anything.
+const LIMITS = [
+  ["max_tokens", "Max output tokens", "number"],
+  ["timeout", "Timeout (seconds)", "number"],
+  ["max_input_chars", "Max input characters", "number", "Longer meetings are summarized in parts."],
+];
+const AI_FIELDS = {
+  anthropic: {
+    main: [
+      ["api_key", "API key", "key", "From console.anthropic.com → API Keys."],
+      ["model", "Model", "model", "claude-opus-5-5 writes the best notes. claude-haiku-5-5 is the cheapest."],
+      ["effort", "Effort", ["", "low", "medium", "high", "xhigh", "max"],
+        "How hard Claude thinks. medium suits meeting notes. Blank leaves it out (for models without effort)."],
+    ],
+    adv: [
+      ["fallbacks", "Refusal fallback", ["default", ""],
+        "default: if Claude declines, Anthropic retries on a fallback model. Blank turns it off."],
+      ["base_url", "API address", "text", "Blank uses Anthropic's normal address."], ...LIMITS],
+  },
+  openai: {
+    main: [
+      ["api_key", "API key", "key", "From platform.openai.com → API keys."],
+      ["model", "Model", "model", "Use Fetch models to see what your key can use."],
+    ],
+    adv: [
+      ["api_style", "API", ["responses", "chat_completions"], "OpenAI's Responses API, or the older Chat Completions."],
+      ["token_param", "Output-limit parameter", ["max_completion_tokens", "max_tokens", ""],
+        "Chat Completions only. Blank sends none."],
+      ["base_url", "API address", "text", "Blank uses OpenAI's normal address."], ...LIMITS],
+  },
+  gemini: {
+    main: [
+      ["api_key", "API key", "key", "From aistudio.google.com → Get API key."],
+      ["model", "Model", "model", "gemini-flash-latest always points at Google's newest Flash model."],
+    ],
+    adv: [
+      ["base_url", "API address", "text"],
+      ["generate_path", "Generate path", "text", "{model} is replaced with the model name."],
+      ["models_path", "Models path", "text"], ...LIMITS],
+  },
+  ollama: {
+    main: [
+      ["base_url", "Ollama address", "text",
+        "Install Ollama from ollama.com, then pull a model, e.g. ollama pull llama3.2:3b"],
+      ["model", "Model", "model", "Fetch models lists the models you've pulled."],
+    ],
+    adv: [
+      ["num_ctx", "Context window (tokens)", "number", "Bigger reads more of a meeting at once but needs more memory."],
+      ["timeout", "Timeout (seconds)", "number"],
+      ["max_input_chars", "Max input characters", "number", "Longer meetings are summarized in parts."]],
+  },
+  compatible: {
+    main: [
+      ["base_url", "Server address", "text",
+        "For example http://localhost:1234/v1 (LM Studio) or https://openrouter.ai/api/v1"],
+      ["api_key", "API key", "key", "Leave blank if the server doesn't need one."],
+      ["model", "Model", "model"],
+    ],
+    adv: [
+      ["api_style", "API", ["chat_completions", "responses"]],
+      ["token_param", "Output-limit parameter", ["max_tokens", "max_completion_tokens", ""]], ...LIMITS],
+  },
+};
+const AI_WHERE = {
+  off: "Off: nothing is sent anywhere for AI.",
+  anthropic: "Transcripts and notes go to Anthropic when AI notes are written or you ask a question.",
+  openai: "Transcripts and notes go to OpenAI when AI notes are written or you ask a question.",
+  gemini: "Transcripts and notes go to Google when AI notes are written or you ask a question.",
+  ollama: "Runs on this computer. Nothing leaves it.",
+  compatible: "Transcripts and notes go to the server you set below.",
+};
+
+function aiControl(p, [key, label, type, hint], value, envKey) {
+  const attrs = `data-aip="${key}" data-p="${p}" aria-label="${esc(label)}"`;
+  let ctl;
+  if (type === "key") {
+    const ph = value ? "Saved. Type to replace it" : envKey ? "Using the key from your environment" : "Paste your key";
+    ctl = `<div class="btns"><input class="field wide" type="password" ${attrs} autocomplete="off" spellcheck="false" placeholder="${ph}">` +
+      (value ? `<button class="btn ghost sm" data-ai-clear="${p}">Remove</button>` : "") + `</div>`;
+  } else if (type === "model") {
+    ctl = `<div class="btns"><input class="field" list="ai-models-${p}" ${attrs} value="${esc(value)}" spellcheck="false">` +
+      `<datalist id="ai-models-${p}"></datalist><button class="btn sm" data-ai-fetch="${p}">Fetch models</button></div>`;
+  } else if (Array.isArray(type)) {
+    const opts = type.includes(value) ? type : [...type, value];
+    ctl = `<select class="sel" ${attrs}>${opts.map(o =>
+      `<option value="${esc(o)}"${o === value ? " selected" : ""}>${esc(o || "(none)")}</option>`).join("")}</select>`;
+  } else {
+    ctl = `<input class="field ${type === "number" ? "num" : "wide"}" type="${type === "number" ? "number" : "text"}" ` +
+      `${attrs} value="${esc(value)}" spellcheck="false">`;
+  }
+  return `<div class="srow"><div class="stext"><b>${esc(label)}</b>${hint ? `<small>${esc(hint)}</small>` : ""}</div>${ctl}</div>`;
+}
+
+function renderAI() {
+  const c = S.config, p = c.ai.provider;
+  $("#ai-provider").value = p;
+  $("#ai-where").textContent = AI_WHERE[p] || "";
+  $("#ai-where").classList.toggle("warn", p !== "off" && p !== "ollama");
+  $$("[data-ai-on]").forEach(el => { el.hidden = p === "off"; });
+  $$("[data-ai]").forEach(el => {
+    const k = el.dataset.ai;
+    if (el.type === "checkbox") el.checked = !!c.ai[k];
+    else el.value = c.ai[k] ?? "";
+  });
+  if (S.aiDefaults) {
+    $("#ai-sp").placeholder = S.aiDefaults.summary_prompt;
+    $("#ai-cp").placeholder = S.aiDefaults.chat_prompt;
+  }
+  const box = $("#ai-fields");
+  if (!AI_FIELDS[p]) { box.innerHTML = ""; return; }
+  const pc = c.ai.providers[p] || {};
+  const value = k => (k === "api_key" ? pc.api_key_set : pc[k] ?? "");
+  const env = (c.ai_env_keys || {})[p];
+  box.innerHTML = AI_FIELDS[p].main.map(f => aiControl(p, f, value(f[0]), env)).join("") +
+    `<div class="srow"><div class="stext"><b>Check the connection</b><small>Sends a tiny test message.</small></div>` +
+    `<button class="btn" data-ai-test="${p}">Test</button></div>` +
+    `<div class="ai-result" id="ai-result" hidden></div>` +
+    `<details class="adv"><summary>Advanced (addresses &amp; limits)</summary>` +
+    AI_FIELDS[p].adv.map(f => aiControl(p, f, value(f[0]), env)).join("") + `</details>`;
+}
+function showAIResult(text, kind) {
+  const el = $("#ai-result");
+  if (!el) return;
+  el.hidden = false;
+  el.className = `ai-result ${kind || ""}`;
+  el.textContent = text;
+}
+
+// Granola import settings and progress.
+function renderGranola() {
+  const g = S.config.granola;
+  $$("[data-gr]").forEach(el => {
+    const k = el.dataset.gr;
+    if (k === "api_key") { el.value = ""; el.placeholder = g.api_key_set ? "Saved. Type to replace it" : "grn_…"; }
+    else el.value = g[k] ?? "";
+  });
+  $$("[data-gm]").forEach(el => { el.hidden = el.dataset.gm !== g.method; });
+}
+const onThisComputer = () => ["127.0.0.1", "localhost", "::1"].includes(location.hostname);
+
+async function pollSettings() {
+  if (S.route.view !== "settings") return;
+  let g, p;
+  try {
+    [g, p] = await Promise.all([getJSON("/api/granola/status"), getJSON("/api/pocket/status")]);
+  } catch { return; }
+  const running = ["listing", "importing"].includes(g.state);
+  $("#gr-account").textContent = g.signed_in
+    ? `Signed in${g.signed_in_at ? " since " + dayLabel(new Date(g.signed_in_at)) : ""}.`
+    : onThisComputer() ? "Not signed in." : "Not signed in. Sign in from Scribe on your computer.";
+  $("#gr-signin").textContent = g.signed_in ? "Sign in again" : "Sign in";
+  $("#gr-signin").disabled = !onThisComputer();
+  $("#gr-signout").hidden = !g.signed_in;
+  $("#gr-import").hidden = running;
+  $("#gr-stop").hidden = !running;
+  $("#gr-bar").hidden = !running && g.state !== "done";
+  $("#gr-bar span").style.width = g.total ? `${Math.round((g.done / g.total) * 100)}%` : running ? "4%" : "100%";
+  let msg = g.message;
+  if (running && g.current) msg += ` Now: “${g.current}”.`;
+  if (!msg) {
+    msg = g.imported_total ? `${g.imported_total} meetings imported so far. Running it again only adds what's new.`
+      : "Copies titles, attendees, Granola's AI notes, your notes and full transcripts. Running it again only adds what's new.";
+  }
+  $("#gr-msg").textContent = msg;
+  const errs = $("#gr-errors");
+  errs.hidden = !g.errors || !g.errors.length;
+  errs.innerHTML = (g.errors || []).map(x => `<div>${esc(x)}</div>`).join("");
+
+  $("#pk-usb").textContent = p.usb ? `Connected at ${p.usb}`
+    : "Not connected. Plug it in and turn on USB Mode in the Pocket app.";
+  $("#pk-cloud-msg").textContent = (p.cloud_job && p.cloud_job.message) ||
+    "Downloads recordings from your Pocket account (needs Pocket cloud and a key).";
+  $("#pk-cloud").disabled = (p.cloud_job || {}).state === "running";
+}
+setInterval(pollSettings, 2000);
+
+$("#view-settings").addEventListener("click", async e => {
+  const fetchBtn = e.target.closest("[data-ai-fetch]");
+  if (fetchBtn) {
+    e.preventDefault();
+    const p = fetchBtn.dataset.aiFetch;
+    fetchBtn.disabled = true; fetchBtn.textContent = "Fetching…";
+    const r = await send("POST", "/api/ai/models", { provider: p });
+    fetchBtn.disabled = false; fetchBtn.textContent = "Fetch models";
+    if (!r.ok) { showAIResult(r.message, "err"); return; }
+    $(`#ai-models-${p}`).innerHTML = r.models.map(m => `<option value="${esc(m)}">`).join("");
+    showAIResult(r.models.length
+      ? `${r.models.length} models available. Click the Model box to pick one.`
+      : "The provider listed no models.", r.models.length ? "ok" : "err");
+    return;
+  }
+  const testBtn = e.target.closest("[data-ai-test]");
+  if (testBtn) {
+    testBtn.disabled = true; testBtn.textContent = "Testing…";
+    showAIResult("Sending a test message…", "");
+    const r = await send("POST", "/api/ai/test", { provider: testBtn.dataset.aiTest });
+    testBtn.disabled = false; testBtn.textContent = "Test";
+    showAIResult(r.message || (r.ok ? "Connected." : "The test failed."), r.ok ? "ok" : "err");
+    return;
+  }
+  const clearBtn = e.target.closest("[data-ai-clear]");
+  if (clearBtn) {
+    if (!confirm("Remove the saved API key?")) return;
+    await saveConfig({ ai: { providers: { [clearBtn.dataset.aiClear]: { api_key: null } } } }, "Key removed");
+    await reloadConfig(); renderAI(); poll();
+    return;
+  }
+  const id = e.target.closest("button") && e.target.closest("button").id;
+  if (id === "gr-signin") {
+    const w = window.open("about:blank", "_blank");  // open now, or pop-up blockers object
+    const r = await send("POST", "/api/granola/signin");
+    if (!r.ok) { if (w) w.close(); toast(r.message || "Couldn't start Granola sign-in."); return; }
+    if (w) { w.location = r.url; toast("Finish signing in to Granola in the new window."); }
+    else location.href = r.url;
+  } else if (id === "gr-signout") {
+    await send("POST", "/api/granola/signout"); toast("Signed out of Granola."); pollSettings();
+  } else if (id === "gr-import" || id === "gr-reimport") {
+    if (id === "gr-reimport" && !confirm("Refresh every imported meeting from Granola? Notes you've typed in Scribe are kept.")) return;
+    const r = await send("POST", "/api/granola/import", { refresh: id === "gr-reimport" });
+    toast(r.message || (r.ok ? "Import started." : "Couldn't start the import."));
+    pollSettings(); poll();
+  } else if (id === "gr-stop") {
+    await send("POST", "/api/granola/stop"); toast("Stopping after the current meeting…");
+  } else if (id === "pk-pull") {
+    pullPocket();
+  } else if (id === "pk-cloud") {
+    const r = await send("POST", "/api/pocket/cloud-import", { days: Number($("#pk-days").value) || 30 });
+    toast(r.message || (r.ok ? "Importing…" : "Couldn't start."));
+    pollSettings();
+  }
+});
 
 async function loadDevices(selected) {
   const sel = $("#s-mic");
@@ -670,8 +1127,44 @@ async function loadDevices(selected) {
 }
 
 $("#view-settings").addEventListener("change", async e => {
+  if (!S.config) return;
+  if (e.target.id === "ai-provider") {
+    const p = e.target.value;
+    if (await saveConfig({ ai: { provider: p } }, p === "off" ? "AI turned off" : "AI provider saved")) {
+      await reloadConfig(); renderAI(); poll();
+    }
+    return;
+  }
+  const aip = e.target.closest("[data-aip]");
+  if (aip) {
+    const k = aip.dataset.aip;
+    const v = aip.type === "number" ? Number(aip.value) : aip.value.trim();
+    if (k === "api_key" && !v) return;
+    if (await saveConfig({ ai: { providers: { [aip.dataset.p]: { [k]: v } } } })) {
+      if (k === "api_key") { await reloadConfig(); renderAI(); }
+      else S.config.ai.providers[aip.dataset.p][k] = v;
+      poll();
+    }
+    return;
+  }
+  const aik = e.target.closest("[data-ai]");
+  if (aik) {
+    const k = aik.dataset.ai;
+    const v = aik.type === "checkbox" ? aik.checked : aik.type === "number" ? Number(aik.value) : aik.value;
+    if (await saveConfig({ ai: { [k]: v } }, k.endsWith("_prompt") && !v ? "Using the built-in prompt" : "Saved")) {
+      S.config.ai[k] = v;
+    }
+    return;
+  }
+  const gr = e.target.closest("[data-gr]");
+  if (gr) {
+    const k = gr.dataset.gr, v = gr.value.trim();
+    if (k === "api_key" && !v) return;
+    if (await saveConfig({ granola: { [k]: v } })) { await reloadConfig(); renderGranola(); pollSettings(); }
+    return;
+  }
   const el = e.target.closest("[data-key]");
-  if (!el || !S.config) return;
+  if (!el) return;
   const k = el.dataset.key;
   const v = el.type === "checkbox" ? el.checked : el.value.trim();
   if (k === "pocket_api_key" && !v) return;
@@ -732,6 +1225,7 @@ document.addEventListener("keydown", e => {
   } else if (e.key === "Escape") {
     if (!$("#modal").hidden) closeModal();
     else if (!$("#more-menu").hidden) closeMenu();
+    else if (!$("#chat").hidden) $("#chat").hidden = true;
     else if (document.activeElement === $("#q") && $("#q").value) {
       $("#q").value = ""; loadHome(); markNav();
     } else closeSide();

@@ -5,3 +5,5 @@ faster-whisper>=1.0
 requests>=2.31
 flask>=3.0              # phone remote
 qrcode>=7.4             # optional: QR for the remote URL
+anthropic>=1.15        # Claude, for AI notes (optional; only used if you pick it)
+openai>=3.0            # OpenAI and OpenAI-compatible servers (optional)
