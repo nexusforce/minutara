@@ -20,11 +20,13 @@ ICON = ROOT / "build" / "scribe.ico"
 
 datas = [(str(ROOT / "scribe" / "web"), "scribe/web")]
 binaries = []
-hiddenimports = collect_submodules("scribe") + ["qrcode.image.svg"]
+hiddenimports = collect_submodules("scribe") + [
+    "qrcode.image.svg", "clr", "webview.platforms.winforms", "webview.platforms.edgechromium"]
 
 # Libraries that load DLLs, models or data files at runtime: bring everything.
 for pkg in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "soundfile",
-            "_soundfile_data", "pyaudiowpatch", "tokenizers"):
+            "_soundfile_data", "pyaudiowpatch", "tokenizers",
+            "webview", "pythonnet", "clr_loader"):  # the app window (WebView2 via .NET)
     try:
         d, b, h = collect_all(pkg)
         datas += d
@@ -36,7 +38,8 @@ for pkg in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "soundfile",
 # Some libraries look up their own version through package metadata.
 for dist in ("faster-whisper", "ctranslate2", "huggingface-hub", "tokenizers", "tqdm",
              "requests", "packaging", "filelock", "numpy", "anthropic", "openai",
-             "httpx", "pydantic", "flask", "werkzeug", "jinja2", "qrcode"):
+             "httpx", "pydantic", "flask", "werkzeug", "jinja2", "qrcode", "pywebview",
+             "pythonnet", "clr_loader"):
     try:
         datas += copy_metadata(dist)
     except Exception:

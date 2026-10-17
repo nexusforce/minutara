@@ -4,7 +4,7 @@ server.py — Scribe's engine API, and the GUI it serves.
 The GUI is a small web app in scribe/web/ (index.html, app.css, app.js),
 laid out like Granola: a sidebar, a home list of meetings grouped by day,
 and a note per meeting holding your typed notes, the recording and its
-transcript. Scribe App.bat opens it in an Edge app window; a phone on the
+transcript. Scribe.exe opens it in its own window (window.py); a phone on the
 same Wi-Fi opens the same page as a remote. Nothing routes through the
 internet — the browser talks to this process directly.
 
@@ -20,6 +20,7 @@ import queue
 import re
 import socket
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -348,6 +349,26 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
     rec = Recorder(cfg, trans)
     importer = granola.Importer(cfg)
     pocket_job = {"state": "idle", "message": ""}
+    activity = {"t": time.monotonic()}   # last API request, from any window or phone
+    test_lock = threading.Lock()
+
+    def busy() -> str:
+        """What Scribe is in the middle of, if anything (closing the window waits for it)."""
+        if rec.state in LIVE_STATES:
+            return "saving the recording"
+        t = trans.status()
+        if t["busy"] or t["queued"]:
+            return "transcribing"
+        s = summ.status()
+        if s["busy"] or s["queued"]:
+            return "writing AI notes"
+        if importer.snapshot().get("state") in ("listing", "importing"):
+            return "importing from Granola"
+        if pocket_job.get("state") == "running":
+            return "importing from Pocket"
+        return ""
+
+    app.config["SCRIBE"] = {"rec": rec, "busy": busy, "activity": activity}
 
     def authed() -> bool:
         token = request.args.get("token") or request.headers.get("X-Token", "")
@@ -355,8 +376,10 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
 
     @app.before_request
     def guard():
-        if request.path.startswith("/api") and not authed():
-            return jsonify({"error": "Bad or missing token."}), 401
+        if request.path.startswith("/api"):
+            if not authed():
+                return jsonify({"error": "Bad or missing token."}), 401
+            activity["t"] = time.monotonic()
 
     def fail(code: int, message: str):
         return jsonify({"ok": False, "message": message}), code
@@ -619,6 +642,37 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             info = {"mics": [], "default": "", "loopback": "", "error": str(e)}
         info["selected"] = cfg.mic_device
         return jsonify(info)
+
+    @app.post("/api/devices/test")
+    def devices_test():
+        """Record a few seconds from the mic (or the speakers) and report back."""
+        if rec.state in LIVE_STATES:
+            return fail(409, "Stop the recording before testing.")
+        data = request.get_json(silent=True) or {}
+        kind = "speakers" if data.get("kind") == "speakers" else "mic"
+        mic = str(data.get("mic", cfg.mic_device) or "")
+        try:
+            seconds = float(data.get("seconds") or 4)
+        except (TypeError, ValueError):
+            seconds = 4.0
+        if not test_lock.acquire(blocking=False):
+            return fail(409, "A test is already running.")
+        try:
+            from .capture import test_device
+            result = test_device(kind, mic, seconds)
+        except Exception as e:
+            log.exception("%s test failed", kind)
+            return fail(500, f"Test failed: {e}")
+        finally:
+            test_lock.release()
+        log.info("%s test: %s (%s)", kind, result.get("verdict"), result.get("device"))
+        return jsonify(result)
+
+    @app.post("/api/show")
+    def show():
+        """A second launch of Scribe asks this one to show its window."""
+        from . import window
+        return jsonify({"ok": True, "shown": window.bring_to_front()})
 
     # --- misc --------------------------------------------------------------
 
@@ -955,19 +1009,69 @@ def _port_in_use(port: int) -> bool:
         s.close()
 
 
+def _wait_for_port(port: int, timeout: float) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if _port_in_use(port):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _show_running(cfg: Config, url: str) -> None:
+    """Scribe is already running: bring its window up, or open one onto it."""
+    import json
+    import urllib.request
+
+    from . import window
+
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{cfg.server_port}/api/show?token={cfg.server_token}",
+            data=b"{}", method="POST", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            if json.loads(r.read() or b"{}").get("shown"):
+                log.info("brought the running window to the front")
+                return
+    except Exception as e:
+        log.info("couldn't reach the running Scribe's window (%s); opening one", e)
+    if not window.run(url):
+        _open_ui(url)
+
+
+def _finish_in_background(state: dict) -> None:
+    """
+    The window closed. Finish whatever is under way (saving a recording,
+    transcribing, AI notes, an import), then exit. Opening Scribe again
+    meanwhile reconnects to this process, which keeps it alive.
+    """
+    busy, activity = state["busy"], state["activity"]
+    told = ""
+    while True:
+        doing = busy()
+        recent = time.monotonic() - activity["t"] < 12
+        if not doing and not recent:
+            break
+        if doing and doing != told:
+            log.info("window closed; finishing in the background: %s", doing)
+            told = doing
+        time.sleep(1)
+    log.info("nothing left to do; exiting")
+
+
 def serve(cfg: Config, open_browser: bool = False) -> None:
     local_url = f"http://127.0.0.1:{cfg.server_port}/?token={cfg.server_token}"
 
-    # Double-clicking the launcher twice shouldn't crash on a busy port —
-    # if Scribe is already running, just bring up its window.
+    # Opening Scribe twice shouldn't crash on a busy port. If it's already
+    # running, just bring up its window.
     if _port_in_use(cfg.server_port):
-        log.info("already running on port %s; opening the window", cfg.server_port)
-        print("Scribe is already running — opening its window.")
+        log.info("already running on port %s", cfg.server_port)
+        print("Scribe is already running.")
         if open_browser:
-            _open_ui(local_url)
+            _show_running(cfg, local_url)
         return
 
-    app, _ = create_app(cfg)
+    app, rec = create_app(cfg)
     lan_url = f"http://{local_ip()}:{cfg.server_port}/?token={cfg.server_token}"
 
     log.info("serving on port %s (log: %s)", cfg.server_port, LOG_PATH)
@@ -983,7 +1087,27 @@ def serve(cfg: Config, open_browser: bool = False) -> None:
     print("  Windows Firewall will prompt on first run — allow it on Private networks.")
     print("  Quit from the app's settings page (or Ctrl+C here).\n")
 
-    if open_browser:
-        threading.Timer(1.0, _open_ui, args=(local_url,)).start()
+    if not open_browser:
+        app.run(host="0.0.0.0", port=cfg.server_port, threaded=True)
+        return
 
-    app.run(host="0.0.0.0", port=cfg.server_port, threaded=True)
+    # With a window: the server runs on a thread, the window on the main
+    # thread (Windows requires that), and closing the window ends the app.
+    server = threading.Thread(
+        target=app.run, kwargs={"host": "0.0.0.0", "port": cfg.server_port, "threaded": True},
+        daemon=True)
+    server.start()
+    _wait_for_port(cfg.server_port, 15)
+
+    def closing():
+        if rec.state in ("recording", "paused"):
+            log.info("window closed during a recording; stopping and saving it")
+            rec.stop()
+
+    from . import window
+    if window.run(local_url, on_closing=closing):
+        _finish_in_background(app.config["SCRIBE"])
+        os._exit(0)
+
+    _open_ui(local_url)   # no native window here: an Edge app window instead
+    server.join()

@@ -68,7 +68,9 @@ def process(
 
     out = cfg.transcripts_dir / f"{name}.txt"
     out.write_text(text, encoding="utf-8")
-    log.info("transcript saved: %s", out.name)
+    lines = text.count("\n") + 1 if text.strip() else 0
+    log.info("transcript saved: %s (%d lines%s)", out.name, lines,
+             "; no speech found" if not lines else "")
 
     if cfg.push_to_pocket and cfg.pocket_enabled and not cfg.prefer_pocket_transcripts:
         try:

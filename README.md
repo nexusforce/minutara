@@ -52,6 +52,11 @@ to `main`, and each build is tested on Windows before it's published.
 - `scribe-cli.exe` in the same folder is the command-line version
   (`scribe-cli doctor` checks that every part Scribe needs works).
 - It's an x64 app; ARM laptops run it through Windows' built-in emulation.
+- Scribe opens in its own window, drawn by WebView2 (the web engine built
+  into Windows 10/11), so the taskbar button and a pinned icon are Scribe's.
+  It isn't a website: the window talks only to Scribe running on your PC.
+  Closing the window quits Scribe; a recording in progress is stopped and
+  saved first, and a transcription under way finishes in the background.
 
 To build the .exe yourself: `powershell -ExecutionPolicy Bypass -File build\build_exe.ps1`.
 
@@ -163,6 +168,18 @@ ready. You can start the next recording while the last one transcribes.
 (System/Light/Dark), microphone, recordings folder, speech model, speaker
 names, the Pocket options and API key, plus **Link your phone**, the
 activity log and Quit.
+
+**Test mic** and **Test speakers** (Settings → Recording) record four
+seconds, play them back and say what they found: working, too quiet, silent
+(often Windows' microphone privacy switch), static, or a device whose driver
+sends audio at the wrong speed. Use them before a real meeting, and after
+changing microphones.
+
+Recordings follow the clock. Windows sends nothing from the speakers while
+nothing plays, and some drivers deliver audio too fast or too slow; Scribe
+fills the gaps with silence and drops anything past real time, so a
+10-second recording is 10 seconds long. Each recording logs what every
+device actually did (`scribe.log`, lines starting `capture:`).
 
 Files that were already in `recordings/` or `transcripts/` (from the CLI,
 the Pocket, or older versions of Scribe) show up as notes automatically.
