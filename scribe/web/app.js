@@ -55,6 +55,7 @@ const ICONS = {
   refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
   sparkle: '<path d="M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
   up: '<path d="M12 19V6M6.5 11.5 12 6l5.5 5.5"/>',
+  speaker: '<path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
   copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/>',
 };
 const SOURCE = { pocket: "Pocket", granola: "Granola", pc: "This PC" };
@@ -649,6 +650,12 @@ function renderTranscript(n) {
   const key = `${n.id}:${n.transcript.length}`;
   if (box.dataset.for === key) return;  // unchanged — don't redraw under the reader
   box.dataset.for = key;
+  if (!n.transcript.trim()) {
+    box.innerHTML = `<div class="t-empty"><p>No speech was found in this recording. Play it back to check it has sound;
+      if it's silent or static, use <a href="#/settings">Settings → Test mic</a> to find a microphone that works.</p>
+      ${n.has_audio ? `<button class="btn" data-act="transcribe">Transcribe again</button>` : ""}</div>`;
+    return;
+  }
   const me = (n.me_label || "Me").toLowerCase();
   let out = "", prev = "";
   for (const raw of n.transcript.split("\n")) {
@@ -1053,7 +1060,41 @@ async function pollSettings() {
 }
 setInterval(pollSettings, 2000);
 
+async function testAudio(kind) {
+  const btn = kind === "mic" ? $("#t-mic") : $("#t-spk");
+  const other = kind === "mic" ? $("#t-spk") : $("#t-mic");
+  const label = btn.innerHTML;
+  const msg = $("#t-msg");
+  btn.disabled = other.disabled = true;
+  btn.textContent = kind === "mic" ? "Speak now…" : "Listening…";
+  msg.className = "";
+  msg.textContent = kind === "mic"
+    ? "Recording 4 seconds: say a sentence at your normal volume."
+    : "Recording 4 seconds of what your computer is playing.";
+  $("#t-result").hidden = true;
+  const r = await send("POST", "/api/devices/test", { kind, mic: $("#s-mic").value, seconds: 4 });
+  btn.disabled = other.disabled = false;
+  btn.innerHTML = label;
+  const good = r.ok && r.verdict === "good";
+  msg.textContent = r.message || (good ? "Works." : "The test didn't work.");
+  msg.className = good ? "ok" : "warn";
+  if (!r.device) return;
+  // Level bar: -60 dB (silence) .. 0 dB (full scale), on the loudest moment.
+  const pk = r.peak_db == null ? -100 : r.peak_db;
+  const lv = $("#t-level");
+  lv.style.width = Math.max(0, Math.min(100, (pk + 60) / 60 * 100)) + "%";
+  lv.className = r.verdict === "good" ? "" : r.verdict === "low" || r.verdict === "quiet" ? "low" : "bad";
+  const db = v => v == null ? "silent" : `${Math.round(v)} dB`;
+  $("#t-facts").textContent = `${r.device} · ${r.host_api}, ${r.rate / 1000} kHz, ${r.channels} ch · `
+    + `loudest ${db(r.peak_db)}, average ${db(r.rms_db)} · sent ${r.sent_s}s of audio in ${r.seconds}s`;
+  $("#t-audio").src = r.audio || "";
+  $("#t-result").hidden = false;
+  if (r.audio) $("#t-audio").play().catch(() => {});
+}
+
 $("#view-settings").addEventListener("click", async e => {
+  if (e.target.closest("#t-mic")) { testAudio("mic"); return; }
+  if (e.target.closest("#t-spk")) { testAudio("speakers"); return; }
   const fetchBtn = e.target.closest("[data-ai-fetch]");
   if (fetchBtn) {
     e.preventDefault();
@@ -1117,6 +1158,9 @@ async function loadDevices(selected) {
     const def = d.default ? `System default (${d.default})` : "System default";
     sel.innerHTML = `<option value="">${esc(def)}</option>` +
       d.mics.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+    const full = selected && !d.mics.includes(selected)
+      && d.mics.find(m => m.toLowerCase().startsWith(selected.toLowerCase()));
+    if (full) selected = full;
     if (selected && !d.mics.includes(selected)) {
       sel.insertAdjacentHTML("beforeend", `<option value="${esc(selected)}">${esc(selected)} (not connected)</option>`);
     }

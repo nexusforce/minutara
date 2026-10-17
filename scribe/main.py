@@ -189,6 +189,17 @@ def cmd_doctor(args, cfg) -> None:
             raise FileNotFoundError(f"missing {', '.join(missing)} in {WEB_DIR}")
         return str(WEB_DIR)
 
+    def window_check():
+        if platform.system() != "Windows":
+            return "skipped (Windows only)"
+        from . import window
+        ok, detail = window.available()
+        if ok:
+            return f"opens in its own window ({detail})"
+        if "not found" in detail:  # Edge's app window stands in; not a failure
+            return f"{detail}; Scribe will use an Edge window instead"
+        raise RuntimeError(detail)
+
     def transcribe_check():
         import tempfile
         import wave
@@ -217,6 +228,7 @@ def cmd_doctor(args, cfg) -> None:
     step("voice detection", vad_check)
     step("recording devices", capture_check)
     step("app interface files", web_check)
+    step("app window", window_check)
     if args.transcribe:
         step("transcription", transcribe_check)
 

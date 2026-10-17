@@ -68,6 +68,26 @@ jobs:
           if ($status2.state -ne "idle") { throw "Scribe.exe did not start" }
           Stop-Process -Id $app.Id -Force
 
+          # Double-clicked (no arguments), Scribe.exe opens its own window,
+          # so the taskbar and a pinned icon show Scribe, not Edge.
+          $port = (Get-Content config.json | ConvertFrom-Json).server_port
+          $win = Start-Process .\Scribe.exe -PassThru
+          $title = ""
+          $deadline = (Get-Date).AddSeconds(45)
+          while ((Get-Date) -lt $deadline -and $title -ne "Scribe") {
+            Start-Sleep -Seconds 2
+            $win.Refresh()
+            $title = $win.MainWindowTitle
+          }
+          Write-Host "window title: '$title'"
+          if ($title -ne "Scribe") { throw "Scribe.exe didn't open its own window" }
+          # Opening it again hands over to the running app and exits.
+          $again = Start-Process .\Scribe.exe -PassThru
+          if (-not $again.WaitForExit(20000)) { throw "a second launch didn't hand over to the running app" }
+          $shown = Invoke-RestMethod -Method Post "http://127.0.0.1:$port/api/show?token=$token"
+          if (-not $shown.shown) { throw "the running window couldn't be brought to the front" }
+          Stop-Process -Id $win.Id -Force
+
           Write-Host "--- scribe.log (tail)"
           Get-Content scribe.log -Tail 25
 

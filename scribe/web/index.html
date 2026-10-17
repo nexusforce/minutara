@@ -202,6 +202,18 @@
             <select class="sel wide" id="s-mic" data-key="mic_device"></select>
           </div>
           <div class="srow">
+            <div class="stext"><b>Test your audio</b><small id="t-msg">Records 4 seconds, then plays it back. For the speakers test, play a video or song first.</small></div>
+            <div class="btns">
+              <button class="btn" id="t-mic"><i data-i="mic"></i>Test mic</button>
+              <button class="btn" id="t-spk"><i data-i="speaker"></i>Test speakers</button>
+            </div>
+          </div>
+          <div class="srow col" id="t-result" hidden>
+            <div class="meter"><span id="t-level"></span></div>
+            <div class="t-facts" id="t-facts"></div>
+            <audio id="t-audio" controls preload="auto"></audio>
+          </div>
+          <div class="srow">
             <div class="stext"><b>Recordings folder</b><small>Relative to the app folder, or a full path</small></div>
             <input class="field wide" data-key="recordings_dir" spellcheck="false">
           </div>

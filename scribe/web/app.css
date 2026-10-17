@@ -397,6 +397,13 @@ body[data-rec="paused"] .bars i, body[data-rec="saving"] .bars i { animation: no
 .ai-result.err { color: var(--err); }
 .bar { height: 5px; margin-top: 8px; border-radius: 999px; background: var(--edge); overflow: hidden; max-width: 320px; }
 .bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+.stext small.ok { color: var(--accent); }
+.meter { height: 8px; border-radius: 999px; background: var(--edge); overflow: hidden; }
+.meter span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.meter span.low { background: #c9a227; }
+.meter span.bad { background: var(--rec); }
+.t-facts { font-size: 12px; color: var(--dim); margin: 8px 0 10px; overflow-wrap: anywhere; }
+#t-audio { width: 100%; max-width: 420px; height: 36px; }
 .gr-errors { max-height: 160px; overflow-y: auto; padding: 10px 0 14px; font: 12px/1.5 var(--mono); color: var(--dim); border-top: 1px solid var(--edge); }
 
 /* --- modal, toast ------------------------------------------------------- */
