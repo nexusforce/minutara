@@ -144,6 +144,90 @@ def cmd_config(args, cfg) -> None:
 """)
 
 
+def cmd_doctor(args, cfg) -> None:
+    """Check that every part Scribe needs loads on this machine."""
+    import platform
+    import sys
+
+    results = []
+
+    def step(name, fn):
+        try:
+            results.append((True, name, fn() or "ok"))
+        except Exception as e:  # report everything; this is a diagnostic
+            results.append((False, name, f"{e.__class__.__name__}: {e}"))
+
+    def soundfile_check():
+        import soundfile
+        return soundfile.__libsndfile_version__
+
+    def av_check():
+        import av
+        return av.__version__
+
+    def ct2_check():
+        import ctranslate2
+        return f"{ctranslate2.__version__}, {ctranslate2.get_cuda_device_count()} NVIDIA GPU(s)"
+
+    def vad_check():
+        import numpy as np
+        from faster_whisper.vad import get_speech_timestamps
+        get_speech_timestamps(np.zeros(16000, dtype=np.float32))
+        return "Silero VAD model loads"
+
+    def capture_check():
+        if platform.system() != "Windows":
+            return "skipped (Windows only)"
+        from .capture import list_input_devices
+        d = list_input_devices()
+        return f"{len(d['mics'])} microphone(s); speakers via {d['loopback'] or 'none found'}"
+
+    def web_check():
+        from .server import WEB_DIR
+        missing = [f for f in ("index.html", "app.js", "app.css") if not (WEB_DIR / f).exists()]
+        if missing:
+            raise FileNotFoundError(f"missing {', '.join(missing)} in {WEB_DIR}")
+        return str(WEB_DIR)
+
+    def transcribe_check():
+        import tempfile
+        import wave
+        from pathlib import Path
+
+        import numpy as np
+
+        from .transcribe import transcribe
+        with tempfile.TemporaryDirectory() as tmp:
+            wav = Path(tmp) / "tone.wav"
+            t = np.arange(16000 * 2) / 16000
+            pcm = (0.2 * np.sin(2 * np.pi * 220 * t) * 32767).astype(np.int16)
+            with wave.open(str(wav), "wb") as w:
+                w.setnchannels(2)
+                w.setsampwidth(2)
+                w.setframerate(16000)
+                w.writeframes(np.repeat(pcm, 2).tobytes())
+            transcribe(wav, model_size=cfg.whisper_model, device=cfg.whisper_device)
+        return f"{cfg.whisper_model} loaded and ran"
+
+    step("Python", lambda: f"{platform.python_version()} ({platform.machine()}, "
+                           f"{'packaged app' if getattr(sys, 'frozen', False) else 'source'})")
+    step("audio files (libsndfile)", soundfile_check)
+    step("audio decoding (PyAV)", av_check)
+    step("speech engine (CTranslate2)", ct2_check)
+    step("voice detection", vad_check)
+    step("recording devices", capture_check)
+    step("app interface files", web_check)
+    if args.transcribe:
+        step("transcription", transcribe_check)
+
+    for ok, name, detail in results:
+        print(f"  {'OK  ' if ok else 'FAIL'}  {name}: {detail}")
+    failed = [name for ok, name, _ in results if not ok]
+    log.info("doctor: %s", "all OK" if not failed else f"failed: {', '.join(failed)}")
+    if failed:
+        raise SystemExit(1)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="scribe")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -176,6 +260,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("config", help="show current settings")
     c.set_defaults(func=cmd_config)
+
+    d = sub.add_parser("doctor", help="check that every part Scribe needs works here")
+    d.add_argument("--transcribe", action="store_true",
+                   help="also load the speech model and transcribe a test tone")
+    d.set_defaults(func=cmd_doctor)
 
     return p
 

@@ -1,0 +1,88 @@
+# Builds Scribe.exe on Windows, tests the packaged app, and (on main) publishes
+# Scribe-windows.zip as a GitHub Release. Pull requests get the zip as a
+# downloadable build artifact instead.
+name: Build Windows app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # publishing releases from main
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: x64     # the speech libraries are x64-only; ARM PCs run it under emulation
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller pillow
+
+      - name: Build Scribe.exe
+        run: |
+          python build\make_icon.py
+          python -m PyInstaller build\scribe.spec --noconfirm --clean
+          Copy-Item README.md, LICENSE -Destination dist\Scribe
+
+      - name: Zip
+        run: 7z a -tzip -mx=5 Scribe-windows.zip .\dist\Scribe | Select-Object -Last 3
+
+      # Test the zip exactly as a user gets it: unzip, then run from there.
+      - name: Test the packaged app
+        env:
+          SCRIBE_WHISPER_MODEL: tiny.en
+        run: |
+          7z x Scribe-windows.zip -osmoke | Select-Object -Last 2
+          Set-Location smoke\Scribe
+
+          .\scribe-cli.exe doctor --transcribe
+          if ($LASTEXITCODE -ne 0) { throw "doctor reported a failure" }
+
+          $cli = Start-Process .\scribe-cli.exe -ArgumentList "serve", "--port", "8790" -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 20
+          $token = (Get-Content config.json | ConvertFrom-Json).server_token
+          $status = Invoke-RestMethod "http://127.0.0.1:8790/api/status?token=$token"
+          if ($status.state -ne "idle") { throw "unexpected state: $($status.state)" }
+          $page = Invoke-WebRequest "http://127.0.0.1:8790/" -UseBasicParsing
+          if ($page.Content -notmatch "/static/app.js") { throw "app page missing" }
+          $devices = Invoke-RestMethod "http://127.0.0.1:8790/api/devices?token=$token"
+          if ("$($devices.error)" -match "No module named") { throw "recording library missing: $($devices.error)" }
+          Stop-Process -Id $cli.Id -Force
+
+          # The windowless Scribe.exe must start too.
+          $app = Start-Process .\Scribe.exe -ArgumentList "serve", "--port", "8791" -PassThru
+          Start-Sleep -Seconds 20
+          $status2 = Invoke-RestMethod "http://127.0.0.1:8791/api/status?token=$token"
+          if ($status2.state -ne "idle") { throw "Scribe.exe did not start" }
+          Stop-Process -Id $app.Id -Force
+
+          Write-Host "--- scribe.log (tail)"
+          Get-Content scribe.log -Tail 25
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scribe-windows
+          path: Scribe-windows.zip
+          retention-days: 14
+
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "1.0.${{ github.run_number }}"
+          gh release create "v$version" Scribe-windows.zip `
+            --title "Scribe $version" --notes-file build\release-notes.md --latest
