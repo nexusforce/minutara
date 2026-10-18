@@ -204,10 +204,14 @@ def cmd_doctor(args, cfg) -> None:
     def meetings_check():
         if platform.system() != "Windows":
             return "skipped (Windows only)"
-        from .meetings import mic_users, window_titles
-        users, titles = mic_users(), window_titles()
-        names = ", ".join(sorted({u.replace("/", "\\").split("\\")[-1] for u in users})) or "nothing"
-        return f"microphone in use by: {names}; {len(titles)} windows checked"
+        from .meetings import audio_session_users, registry_mic_users, window_titles
+
+        def short(us):
+            return ", ".join(sorted({u.replace("/", "\\").split("\\")[-1] for u in us})) or "nothing"
+        reg = registry_mic_users()
+        ses = audio_session_users()   # raises if the audio-session library didn't load
+        return (f"privacy record: {short(reg)}; audio sessions: {short(ses)}; "
+                f"{len(window_titles())} windows checked")
 
     def transcribe_check():
         import tempfile

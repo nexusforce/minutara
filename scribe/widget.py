@@ -36,6 +36,8 @@ class WidgetController:
         self.hidden_for = ""      # recording (note id) the user tucked the recorder away for
         self.page_seen = 0.0      # when the floating page last drew itself
         self.page_mode = ""
+        self.preview_face = ""    # Settings → "Show me": show a face for a few seconds
+        self.preview_until = 0.0
         self._err = ""
         self._stop = threading.Event()
 
@@ -46,6 +48,8 @@ class WidgetController:
             return False
 
     def desired(self) -> str:
+        if self.preview_face and time.monotonic() < self.preview_until:
+            return self.preview_face
         m = self.watcher.snapshot()
         live = self.rec.state in LIVE
         if not live and m["ended"]:
@@ -102,6 +106,11 @@ class WidgetController:
     def hide_for_recording(self) -> None:
         """The – button: tuck the recorder away until this recording ends."""
         self.hidden_for = self.rec.note_id
+        self.preview_until = 0.0
+
+    def preview(self, face: str, seconds: float = 10) -> None:
+        self.preview_face = face if face in SIZES else "recording"
+        self.preview_until = time.monotonic() + seconds
 
     def seen(self, mode: str) -> None:
         self.page_seen, self.page_mode = time.time(), mode
@@ -115,7 +124,15 @@ class WidgetController:
                 reason = last_error
             except Exception:
                 pass
+        native = {}
+        try:
+            if self.ui is not None and hasattr(self.ui, "native_state") and self.available():
+                native = self.ui.native_state()
+        except Exception:
+            pass
         return {"available": self.available(), "mode": self.mode, "reason": reason,
+                "native": native,
                 "app": m["app"] or m["ended"], "preview": m.get("preview", False),
+                "preview_face": self.preview_face if time.monotonic() < self.preview_until else "",
                 "page_mode": self.page_mode,
                 "page_seen_ago": round(time.time() - self.page_seen, 1) if self.page_seen else None}

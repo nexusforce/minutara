@@ -21,12 +21,14 @@ ICON = ROOT / "build" / "scribe.ico"
 datas = [(str(ROOT / "scribe" / "web"), "scribe/web")]
 binaries = []
 hiddenimports = collect_submodules("scribe") + [
-    "qrcode.image.svg", "clr", "webview.platforms.winforms", "webview.platforms.edgechromium"]
+    "qrcode.image.svg", "clr", "webview.platforms.winforms", "webview.platforms.edgechromium",
+    "pycaw.api.audiopolicy", "pycaw.api.mmdeviceapi", "pycaw.constants"]
 
 # Libraries that load DLLs, models or data files at runtime: bring everything.
 for pkg in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "soundfile",
             "_soundfile_data", "pyaudiowpatch", "tokenizers",
-            "webview", "pythonnet", "clr_loader"):  # the app window (WebView2 via .NET)
+            "webview", "pythonnet", "clr_loader",   # the app window (WebView2 via .NET)
+            "pycaw", "comtypes"):                    # meeting detection (Windows audio sessions)
     try:
         d, b, h = collect_all(pkg)
         datas += d

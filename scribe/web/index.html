@@ -226,12 +226,13 @@
         <h2 class="group">Meetings</h2>
         <div class="card rows">
           <div class="srow">
-            <div class="stext"><b>Detect meetings</b><small>When Zoom, Teams or Webex starts using your microphone (the app, or Teams, Meet and Zoom in a web browser), a small pop-up offers to start recording. Works while Scribe is open, even minimized.</small></div>
+            <div class="stext"><b>Detect meetings</b><small>When Zoom, Teams or Webex starts using your microphone (the app, or Teams, Meet and Zoom in a web browser), a small pop-up offers to start recording. Works while Scribe is open, even minimized.</small><small id="m-live"></small></div>
             <label class="switch"><input type="checkbox" data-key="meeting_detect"><span></span></label>
           </div>
           <div class="srow">
-            <div class="stext"><b>Floating recorder</b><small>While recording, a small window with the timer, pause and stop stays on top whenever Scribe's window isn't in front. Drag it anywhere; the – button tucks it away for the rest of that recording.</small><small class="warn" id="m-unavail" hidden></small></div>
-            <label class="switch"><input type="checkbox" data-key="floating_recorder"><span></span></label>
+            <div class="stext"><b>Floating recorder</b><small>While recording, a small window with the timer, pause and stop stays on top whenever Scribe's window isn't in front. Drag it anywhere; the – button tucks it away for the rest of that recording.</small><small class="warn" id="m-unavail" hidden></small><small id="m-rec-msg"></small></div>
+            <div class="btns"><button class="btn" id="m-rec-preview">Show me</button>
+            <label class="switch"><input type="checkbox" data-key="floating_recorder"><span></span></label></div>
           </div>
           <div class="srow">
             <div class="stext"><b>Preview</b><small id="m-msg">Shows the meeting pop-up for 20 seconds, as if a Zoom meeting just started.</small></div>

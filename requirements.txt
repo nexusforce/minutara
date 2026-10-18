@@ -8,3 +8,4 @@ qrcode>=7.4             # optional: QR for the remote URL
 anthropic>=1.15        # Claude, for AI notes (optional; only used if you pick it)
 openai>=3.0            # OpenAI and OpenAI-compatible servers (optional)
 pywebview>=5.3; sys_platform == "win32"   # Scribe's own app window (WebView2)
+pycaw>=20240210; sys_platform == "win32"  # which apps are recording from the mic (meeting detection)

@@ -14,6 +14,7 @@ import os
 import queue
 import sys
 import threading
+import time
 
 from .config import APP_ROOT
 from .log import get
@@ -122,6 +123,14 @@ def run(url: str, on_closing=None, widget=None) -> bool:
         _window.events.shown += _shown.set
         if widget is not None:
             widget.create(_window)
+        # A hidden page gets slowed to one timer tick a minute after a while;
+        # the floating window's page is hidden most of the time and must stay
+        # current, so turn that off for Scribe's windows.
+        flags = ("--disable-background-timer-throttling --disable-renderer-backgrounding "
+                 "--disable-features=ElasticOverscroll")   # (pywebview's own flag, kept)
+        extra = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+        if flags not in extra:
+            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (extra + " " + flags).strip()
         log.info("opening the app window")
         # private_mode=False keeps the page's own settings (theme, last view)
         # between runs, stored next to the app.
@@ -167,6 +176,7 @@ class WidgetUI:
         self.q: "queue.Queue" = queue.Queue()
         self.size = (0, 0)
         self.visible = False
+        self.last = ""          # what the last show/hide did, for status and the log
 
     # -- set-up (main thread, before webview.start) --------------------------
     def create(self, main) -> None:
@@ -235,29 +245,88 @@ class WidgetUI:
             op, arg = self.q.get()
             if self.closing_app:
                 return
-            try:
-                if op == "show":
-                    self._do_show(*arg)
-                else:
-                    self.visible = False
-                    self.win.hide()
-            except Exception as e:
-                log.warning("floating window %s failed: %s", op, e)
+            done = threading.Event()
+
+            def run(op=op, arg=arg):
+                try:
+                    if op == "show":
+                        self._do_show(*arg)
+                    else:
+                        self.visible = False
+                        self.win.hide()
+                        self.last = "hidden"
+                except Exception as e:
+                    self.last = f"{op} failed: {e.__class__.__name__}: {e}"
+                    log.warning("floating window %s failed: %s", op, e, exc_info=True)
+                finally:
+                    done.set()
+
+            started = time.monotonic()
+            threading.Thread(target=run, daemon=True).start()
+            if not done.wait(8):
+                log.warning("floating window: %s is taking over 8 s; the window isn't responding", op)
+            else:
+                log.info("floating window: %s %s (%.2f s)", op,
+                         arg[0] if op == "show" else "", time.monotonic() - started)
 
     def _do_show(self, mode: str, size: tuple[int, int]) -> None:
         import webview
         w, h = size
+        problems = []
+        for step in ("resize", "move", "show"):   # each on its own: one failing mustn't stop the rest
+            try:
+                if step == "resize" and (w, h) != self.size:
+                    self.win.resize(w, h)
+                    self.size = (w, h)
+                elif step == "move":
+                    x, y = self._place(w, h, webview)
+                    self.win.move(x, y)
+                elif step == "show":
+                    self.win.show()
+            except Exception as e:
+                problems.append(f"{step}: {e}")
+        if problems:
+            log.warning("floating window: %s", "; ".join(problems))
+        self.visible = True
+        # Make sure Windows really shows it: if the window still isn't on
+        # screen, show it directly, on top and without taking focus from the
+        # meeting app.
+        hwnd = self.hwnd()
+        if hwnd and not _user32().IsWindowVisible(hwnd):
+            _user32().ShowWindow(hwnd, 4)            # SW_SHOWNOACTIVATE
+            _user32().SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040)
+            self.last = f"shown {mode} (directly); visible={bool(_user32().IsWindowVisible(hwnd))}"
+        else:
+            self.last = f"shown {mode}; visible={bool(hwnd and _user32().IsWindowVisible(hwnd))}"
+        # Tell the page which face to draw, without waiting for it: a page
+        # that's been hidden a while can be slow to answer, and the window
+        # must appear regardless. (The page also checks for itself.)
+        threading.Thread(target=self._tell_page, args=(mode,), daemon=True).start()
+
+    def hwnd(self) -> int:
+        """The floating window's Windows handle (0 if it isn't there)."""
+        try:
+            return int(self.win.native.Handle.ToInt64())
+        except Exception:
+            try:
+                return int(_user32().FindWindowW(None, self.TITLE) or 0)
+            except Exception:
+                return 0
+
+    def native_state(self) -> dict:
+        """What Windows itself says about the floating window."""
+        try:
+            h = self.hwnd()
+            return {"found": bool(h), "visible": bool(h and _user32().IsWindowVisible(h)),
+                    "last": self.last}
+        except Exception as e:
+            return {"found": False, "visible": False, "last": self.last, "error": str(e)}
+
+    def _tell_page(self, mode: str) -> None:
         try:
             self.win.evaluate_js(f"window.scribeMode && window.scribeMode({mode!r})")
         except Exception:
             pass
-        if (w, h) != self.size:
-            self.win.resize(w, h)
-            self.size = (w, h)
-        x, y = self._place(w, h, webview)
-        self.win.move(x, y)
-        self.visible = True
-        self.win.show()
 
     def _place(self, w: int, h: int, webview) -> tuple[int, int]:
         """Where you last left it, kept on screen; bottom right the first time."""
@@ -271,6 +340,30 @@ class WidgetUI:
         else:
             x, y = sw - w - 24, sh - h - 88   # clear of the taskbar
         return max(0, min(x, sw - w)), max(0, min(y, sh - h))
+
+
+_u32 = None
+
+
+def _user32():
+    """
+    Scribe's own handle on user32.dll. A private one: the window library
+    calls the shared ctypes.windll.user32 with loosely typed arguments, and
+    declaring types on the shared one broke its calls.
+    """
+    global _u32
+    if _u32 is None:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.WinDLL("user32")
+        u.FindWindowW.restype = wintypes.HWND
+        u.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        u.IsWindowVisible.argtypes = [wintypes.HWND]
+        u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                   ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        _u32 = u
+    return _u32
 
 
 def _parse_pos(text: str):
