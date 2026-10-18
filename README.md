@@ -158,7 +158,8 @@ A note has a title, chips for date, length, source and folder, and three tabs:
 
 The pill at the bottom works like Granola's: pause, resume and stop while
 recording, then a player once the audio is saved. The **…** menu downloads
-the recording or transcript, re-runs transcription, or deletes the note.
+or copies the whole meeting, downloads the recording, re-runs
+transcription, or deletes the note.
 
 Capture and transcription are separate steps. Audio streams to disk while
 you record — a crash loses seconds, not the meeting — and the note has its
@@ -213,6 +214,26 @@ nothing plays, and some drivers deliver audio too fast or too slow; Scribe
 fills the gaps with silence and drops anything past real time, so a
 10-second recording is 10 seconds long. Each recording logs what every
 device actually did (`scribe.log`, lines starting `capture:`).
+
+**Export.** Each tab has **Copy** and **Download** for that part: AI notes,
+My notes or the transcript. **… → Download everything** / **Copy
+everything** gives the whole meeting as one readable document: a title,
+then the date, length, folder and attendees, then AI notes, your notes and
+the transcript. **Settings → Export → Export all** downloads a zip with one
+such document per meeting (all meetings or one folder; pick which parts;
+optionally with the recordings). Files are plain text (`.txt`, opens in
+Notepad, Word or an email) or Markdown (`.md`, for Notion, Obsidian and
+similar), set under **File type**. Names start with the date, e.g.
+`2026-10-18 1410 Weekly sync.txt`, so they sort by date.
+
+**Meeting notes folder.** Scribe also keeps a readable copy of every
+meeting in `Meeting notes\` next to Scribe.exe, updated a few seconds after
+its AI notes, your notes or its transcript change, and removed when you
+delete the meeting. Point it at any folder (OneDrive, a shared drive) under
+**Settings → Export**, or turn it off there. **Save all now** writes every
+existing meeting; **Open folder** opens it in Explorer. Scribe's own data
+stays where it was: notes and AI notes in `notes\` (one JSON file per
+meeting), transcripts in `transcripts\`, audio in `recordings\`.
 
 Files that were already in `recordings/` or `transcripts/` (from the CLI,
 the Pocket, or older versions of Scribe) show up as notes automatically.

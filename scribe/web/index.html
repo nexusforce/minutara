@@ -124,8 +124,9 @@
         <div class="menu-wrap">
           <button class="icon-btn round" id="more-btn" aria-label="More actions"><i data-i="more"></i></button>
           <div class="menu" id="more-menu" hidden>
+            <a id="m-all"><i data-i="doc"></i>Download everything</a>
+            <button id="m-copy-all"><i data-i="copy"></i>Copy everything</button>
             <a id="m-audio"><i data-i="download"></i>Download recording</a>
-            <a id="m-transcript"><i data-i="doc"></i>Download transcript</a>
             <button id="m-retranscribe"><i data-i="refresh"></i>Transcribe again</button>
             <button id="m-delete" class="danger"><i data-i="trash"></i>Delete note</button>
           </div>
@@ -152,9 +153,17 @@
           <div class="md" id="n-summary"></div>
         </div>
         <div id="tab-notes">
+          <div class="part-tools" data-part="notes">
+            <button class="btn sm" data-copy-part><i data-i="copy"></i>Copy</button>
+            <button class="btn sm" data-dl-part><i data-i="download"></i>Download</button>
+          </div>
           <textarea class="note-body" id="n-body" placeholder="Write notes…" aria-label="Your notes"></textarea>
         </div>
         <div id="tab-transcript" hidden>
+          <div class="part-tools" data-part="transcript" id="t-tools">
+            <button class="btn sm" data-copy-part><i data-i="copy"></i>Copy</button>
+            <button class="btn sm" data-dl-part><i data-i="download"></i>Download</button>
+          </div>
           <div class="transcript" id="n-transcript"></div>
         </div>
       </div>
@@ -244,6 +253,37 @@
             <div class="srow"><div class="stext"><b>Meeting page titles</b><small>Teams, Google Meet or Zoom in a web browser count when the browser is using your mic and one of its windows is titled with one of these.</small></div><input class="field wide" data-key="meeting_titles" spellcheck="false"></div>
             <div class="srow"><div class="stext"><b>Any web page using the mic</b><small>Count every browser mic use as a meeting, whatever the page.</small></div><label class="switch"><input type="checkbox" data-key="meeting_browsers"><span></span></label></div>
           </details>
+        </div>
+
+        <h2 class="group">Export</h2>
+        <div class="card rows">
+          <div class="srow col">
+            <div class="stext"><b>Export all meetings</b><small>Downloads a zip with one readable file per meeting (AI notes, your notes and the transcript together), in folders like the sidebar's.</small></div>
+            <div class="export-opts">
+              <select class="sel" id="x-folder" aria-label="Which meetings"><option value="">All meetings</option></select>
+              <label><input type="checkbox" id="x-summary" checked> AI notes</label>
+              <label><input type="checkbox" id="x-notes" checked> My notes</label>
+              <label><input type="checkbox" id="x-transcript" checked> Transcript</label>
+              <label><input type="checkbox" id="x-audio"> Recordings (large)</label>
+              <button class="btn primary" id="x-export"><i data-i="download"></i>Export all</button>
+            </div>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>File type</b><small>Text opens anywhere (Notepad, Word, email). Markdown keeps formatting for Notion, Obsidian and similar apps.</small></div>
+            <select class="sel" data-key="export_format"><option value="txt">Text (.txt)</option><option value="md">Markdown (.md)</option></select>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Keep a copy of every meeting</b><small>Saves each meeting as a readable file in the folder below, updated whenever its AI notes, your notes or its transcript change.</small></div>
+            <label class="switch"><input type="checkbox" data-key="auto_export"><span></span></label>
+          </div>
+          <div class="srow col">
+            <div class="stext"><b>Copies folder</b><small id="x-msg">Where the copies go. Relative to the app folder, or a full path.</small></div>
+            <div class="btns export-dir">
+              <input class="field" data-key="export_dir" spellcheck="false" aria-label="Copies folder">
+              <button class="btn" id="x-open">Open folder</button>
+              <button class="btn" id="x-save-all">Save all now</button>
+            </div>
+          </div>
         </div>
 
         <h2 class="group">Transcription</h2>

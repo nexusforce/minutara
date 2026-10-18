@@ -115,6 +115,12 @@ def run(url: str, on_closing=None, widget=None) -> bool:
     import webview
 
     try:
+        try:
+            # The library blocks downloads unless told otherwise; Scribe's
+            # Download buttons need them (each opens a normal Save dialog).
+            webview.settings["ALLOW_DOWNLOADS"] = True
+        except Exception:
+            pass
         _window = webview.create_window(
             "Scribe", url, width=1240, height=840, min_size=(400, 560),
             text_select=True, background_color=_background())

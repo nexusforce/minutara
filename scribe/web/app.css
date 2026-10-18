@@ -391,6 +391,14 @@ body[data-rec="paused"] .bars i, body[data-rec="saving"] .bars i { animation: no
 .field.area::placeholder { color: var(--faint); }
 .field.num { min-width: 0; width: 84px; }
 .btns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.part-tools { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 8px; }
+.part-tools[hidden] { display: none; }
+.export-opts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 13px; }
+.export-opts label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.export-opts .btn { margin-left: auto; }
+.export-dir { margin-top: 10px; justify-content: flex-start; }
+.export-dir .field { flex: 1; min-width: 200px; max-width: none; width: auto; }
+#x-msg { overflow-wrap: anywhere; }
 .unit { font-size: 12.5px; color: var(--dim); }
 .ai-result { font-size: 12.5px; padding: 0 0 12px; color: var(--dim); overflow-wrap: anywhere; }
 .ai-result.ok { color: var(--accent); }

@@ -7,7 +7,7 @@
 
 The first time, Windows may say "Windows protected your PC" because the app isn't code-signed. Click **More info → Run anyway**. Windows Firewall will also ask once: allow it on **Private** networks, so your phone can reach the remote.
 
-Your settings, notes and recordings are stored next to Scribe.exe. To update, extract the new zip over the old folder: your data stays.
+Your settings, notes and recordings are stored next to Scribe.exe, and a readable copy of every meeting is kept in its `Meeting notes` folder. To update, extract the new zip over the old folder: your data stays.
 
 Runs on 64-bit Windows 10/11, including ARM laptops (through Windows' built-in x64 emulation). The first transcription downloads the speech model (~500 MB for `small.en`).
 

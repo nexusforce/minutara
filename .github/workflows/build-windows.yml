@@ -80,6 +80,8 @@ jobs:
           if ($page.Content -notmatch "/static/app.js") { throw "app page missing" }
           $devices = Invoke-RestMethod "http://127.0.0.1:8790/api/devices?token=$token"
           if ("$($devices.error)" -match "No module named") { throw "recording library missing: $($devices.error)" }
+          $zip = Invoke-WebRequest "http://127.0.0.1:8790/api/export?token=$token" -UseBasicParsing
+          if ("$($zip.Headers['Content-Type'])" -notmatch "zip") { throw "Export all didn't return a zip: $($zip.Headers['Content-Type'])" }
           Stop-Process -Id $cli.Id -Force
 
           # The windowless Scribe.exe must start too.
