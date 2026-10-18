@@ -10,6 +10,7 @@ server.py falls back to an Edge app window.
 
 from __future__ import annotations
 
+import os
 import queue
 import sys
 import threading
@@ -23,17 +24,67 @@ _window = None          # the open window, if any
 _shown = threading.Event()
 
 
+_unblocked = False
+last_error = ""
+
+
+def unblock() -> int:
+    """
+    Clear Windows' "downloaded from the internet" mark from Scribe's own .NET
+    files, as the Unblock checkbox in a file's Properties does.
+
+    Files extracted from a downloaded zip carry that mark unless the zip was
+    unblocked first, and .NET Framework refuses to load marked libraries: the
+    window library then fails with "Failed to resolve
+    Python.Runtime.Loader.Initialize" and Scribe falls back to an Edge window.
+    Only the window library's own folders are touched.
+    """
+    global _unblocked
+    if _unblocked or sys.platform != "win32" or os.environ.get("SCRIBE_NO_UNBLOCK"):
+        return 0
+    _unblocked = True
+    import importlib.util
+    roots = []
+    base = getattr(sys, "_MEIPASS", "")
+    for pkg in ("pythonnet", "webview", "clr_loader"):
+        if base and os.path.isdir(os.path.join(base, pkg)):
+            roots.append(os.path.join(base, pkg))
+            continue
+        try:
+            spec = importlib.util.find_spec(pkg)
+            roots += list(spec.submodule_search_locations or []) if spec else []
+        except Exception:
+            pass
+    cleared = 0
+    for root in roots:
+        for folder, _dirs, files in os.walk(root):
+            for name in files:
+                if name.lower().endswith((".dll", ".exe")):
+                    try:
+                        os.remove(os.path.join(folder, name) + ":Zone.Identifier")
+                        cleared += 1
+                    except OSError:
+                        pass   # not marked (the usual case)
+    if cleared:
+        log.info("unblocked %d downloaded library file(s) for the app window", cleared)
+    return cleared
+
+
 def available() -> tuple[bool, str]:
     """Can a native window open here? (ok, detail) — for `doctor` too."""
+    global last_error
     if sys.platform != "win32":
         return False, "native window is Windows-only"
+    unblock()
     try:
         import webview  # noqa: F401
         from webview.platforms import winforms
     except Exception as e:
-        return False, f"window library didn't load: {e.__class__.__name__}: {e}"
+        last_error = f"window library didn't load: {e.__class__.__name__}: {e}"
+        return False, last_error
     if getattr(winforms, "renderer", "") != "edgechromium":
-        return False, "Microsoft Edge WebView2 Runtime not found"
+        last_error = "Microsoft Edge WebView2 Runtime not found"
+        return False, last_error
     return True, "WebView2"
 
 

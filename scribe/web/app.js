@@ -249,6 +249,9 @@ async function poll() {
 // "meeting detected" prompt shows inside the app instead.
 function renderMeetCard(s) {
   const m = s.meeting || {}, w = s.widget || {};
+  const un = $("#m-unavail");
+  un.hidden = !!w.available || !w.reason;
+  if (w.reason) un.textContent = `Not available right now: ${w.reason}. See the log for details.`;
   const show = !!m.app && !m.dismissed && !w.available && !LIVE.includes(s.state);
   $("#meet-card").hidden = !show;
   if (show) $("#mc-title").textContent = `${m.app} meeting${m.preview ? " (preview)" : ""}`;

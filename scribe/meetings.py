@@ -32,6 +32,13 @@ MIC_KEY = (r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager"
            r"\ConsentStore\microphone")
 
 DEFAULT_APPS = "zoom.exe, teams.exe, msteams, webex, ciscocollabhost.exe"
+# A browser using the mic counts as a meeting when one of its windows is
+# titled like one (Teams, Meet and Zoom on the web, or installed as web apps).
+DEFAULT_TITLES = ("microsoft teams, | teams, google meet, meet -, meet \u2013, meet.google, "
+                  "zoom, webex, whereby, jitsi, huddle")
+TITLE_NAMES = (("teams", "Teams"), ("meet", "Google Meet"), ("zoom", "Zoom"),
+               ("webex", "Webex"), ("whereby", "Whereby"), ("jitsi", "Jitsi"),
+               ("huddle", "Slack"))
 BROWSERS = ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe",
             "vivaldi.exe", "arc.exe")
 
@@ -84,6 +91,67 @@ def mic_users() -> list[str]:
     return users
 
 
+def _exe_of(pid: int) -> str:
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.windll.kernel32
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                               wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    h = k32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(1024)
+        if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            return buf.value.replace("/", "\\").split("\\")[-1].lower()
+        return ""
+    finally:
+        k32.CloseHandle(h)
+
+
+def window_titles() -> list[tuple[str, str]]:
+    """(program, title) of every visible top-level window. Windows only."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    out: list[tuple[str, str]] = []
+    exes: dict[int, str] = {}
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        if user32.IsWindowVisible(hwnd):
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value not in exes:
+                    exes[pid.value] = _exe_of(pid.value)
+                out.append((exes[pid.value], buf.value))
+        return True
+
+    user32.EnumWindows(each, 0)
+    return out
+
+
+def meeting_in_title(title: str, title_pats: list[str]) -> str:
+    t = title.lower()
+    for p in title_pats:
+        if p and p in t:
+            for key, name in TITLE_NAMES:
+                if key in p:
+                    return name
+            return title.split(" - ")[0].split(" | ")[0][:30] or "Meeting"
+    return ""
+
+
 def patterns(apps: str, browsers: bool) -> list[str]:
     pats = [p.strip().lower() for p in (apps or "").split(",") if p.strip()]
     if browsers:
@@ -101,13 +169,27 @@ def friendly(entry: str) -> str:
     return (name[:1].upper() + name[1:]) or "Meeting"
 
 
-def find_meeting(users: list[str], pats: list[str]) -> str:
+def find_meeting(users: list[str], pats: list[str], titles=None,
+                 title_pats: list[str] | None = None) -> str:
     """The friendly name of the first meeting app holding the mic, or ""."""
     for u in users:
         low = u.lower()
         if any(p in low for p in pats):
             return friendly(u)
+    # A browser holding the mic: is one of its windows a meeting?
+    browsers = {u.lower().replace("/", "\\").split("\\")[-1] for u in users
+                if any(b in u.lower() for b in BROWSERS)}
+    if browsers and titles and title_pats:
+        for exe, title in titles():
+            if exe in browsers:
+                name = meeting_in_title(title, title_pats)
+                if name:
+                    return name
     return ""
+
+
+def _short(users: list[str]) -> str:
+    return ", ".join(sorted({u.replace("/", "\\").split("\\")[-1] for u in users})) or "nothing"
 
 
 class MeetingWatcher:
@@ -116,9 +198,11 @@ class MeetingWatcher:
     now; `ended` is set when it lets go (until something acknowledges it).
     """
 
-    def __init__(self, cfg, reader=mic_users, interval: float = 2.0):
+    def __init__(self, cfg, reader=mic_users, interval: float = 2.0, titles=window_titles):
         self.cfg = cfg
         self.reader = reader
+        self.titles = titles
+        self.users_seen = None
         self.interval = interval
         self.lock = threading.Lock()
         self.app = ""
@@ -146,8 +230,19 @@ class MeetingWatcher:
             app = "Zoom"
         elif getattr(self.cfg, "meeting_detect", True):
             try:
-                app = find_meeting(self.reader(),
-                                   patterns(self.cfg.meeting_apps, self.cfg.meeting_browsers))
+                users = self.reader()
+                # Say which apps hold the mic whenever that changes: it's what
+                # to look at when a meeting isn't noticed.
+                short = _short(users)
+                if short != self.users_seen:
+                    log.info("microphone in use by: %s", short)
+                    self.users_seen = short
+                title_pats = [p.strip().lower() for p in
+                              str(getattr(self.cfg, "meeting_titles", DEFAULT_TITLES)).split(",")
+                              if p.strip()]
+                app = find_meeting(users,
+                                   patterns(self.cfg.meeting_apps, self.cfg.meeting_browsers),
+                                   self.titles, title_pats)
                 self.error = ""
             except Exception as e:   # never let detection take anything else down
                 if str(e) != self.error:

@@ -124,7 +124,9 @@ class Config:
     # --- Meeting detection and the floating recorder ---
     meeting_detect: bool = True        # pop up "Meeting detected" when a meeting app takes the mic
     meeting_apps: str = "zoom.exe, teams.exe, msteams, webex, ciscocollabhost.exe"
-    meeting_browsers: bool = False     # also count browsers (Google Meet, Teams on the web)
+    meeting_titles: str = ("microsoft teams, | teams, google meet, meet -, meet \u2013, meet.google, "
+                           "zoom, webex, whereby, jitsi, huddle")   # browser windows that count
+    meeting_browsers: bool = False     # count ANY web page using the mic as a meeting
     floating_recorder: bool = True     # small on-top recorder while Scribe's window isn't in front
     widget_pos: str = ""               # where you last dragged it ("x,y"); "" = bottom right
 
@@ -170,7 +172,7 @@ FLAT_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "pocket_base_url", "whisper_model", "whisper_device",
     "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
-    "meeting_detect", "meeting_apps", "meeting_browsers", "floating_recorder", "widget_pos",
+    "meeting_detect", "meeting_apps", "meeting_titles", "meeting_browsers", "floating_recorder", "widget_pos",
     "usb_volume_label", "usb_record_dir",
     "delete_from_device", "server_port", "server_token",
 )

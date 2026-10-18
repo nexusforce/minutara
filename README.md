@@ -52,6 +52,9 @@ to `main`, and each build is tested on Windows before it's published.
 - `scribe-cli.exe` in the same folder is the command-line version
   (`scribe-cli doctor` checks that every part Scribe needs works).
 - It's an x64 app; ARM laptops run it through Windows' built-in emulation.
+- Scribe unblocks its own window files if Windows marked them as
+  downloaded; if it ever opens in an Edge window instead (no floating
+  recorder), Settings → Meetings says why, and so does `scribe-cli doctor`.
 - Scribe opens in its own window, drawn by WebView2 (the web engine built
   into Windows 10/11), so the taskbar button and a pinned icon are Scribe's.
   It isn't a website: the window talks only to Scribe running on your PC.
@@ -183,10 +186,13 @@ playing. Use them before a real meeting, and after changing devices.
 **Meetings.** When Zoom, Teams or Webex starts using your microphone, a
 small pop-up appears ("Zoom meeting · Take notes? Start / Not now"), like
 Granola's. Scribe reads which apps Windows says are using the mic; nothing
-is listened to. When the meeting app lets go of the mic while you're
-recording, the pop-up asks whether to stop. Scribe has to be open (it can
-be minimized). The list of meeting apps is a setting, and browsers (Google
-Meet, Teams on the web) can be added.
+is listened to. Teams, Google Meet and Zoom in a web browser count too: the
+browser is using the mic and one of its windows is titled like a meeting
+("… | Microsoft Teams", "Meet – …"). When the meeting app lets go of the mic
+while you're recording, the pop-up asks whether to stop. Scribe has to be
+open (it can be minimized). The app list and page titles are settings, and
+every mic change is logged ("microphone in use by: …") so a missed meeting
+is easy to diagnose.
 
 **Floating recorder.** While recording, a small always-on-top window with
 the timer, pause, stop and a button back to Scribe appears whenever

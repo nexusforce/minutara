@@ -201,6 +201,14 @@ def cmd_doctor(args, cfg) -> None:
             return f"{detail}; Scribe will use an Edge window instead"
         raise RuntimeError(detail)
 
+    def meetings_check():
+        if platform.system() != "Windows":
+            return "skipped (Windows only)"
+        from .meetings import mic_users, window_titles
+        users, titles = mic_users(), window_titles()
+        names = ", ".join(sorted({u.replace("/", "\\").split("\\")[-1] for u in users})) or "nothing"
+        return f"microphone in use by: {names}; {len(titles)} windows checked"
+
     def transcribe_check():
         import tempfile
         import wave
@@ -230,6 +238,7 @@ def cmd_doctor(args, cfg) -> None:
     step("recording devices", capture_check)
     step("app interface files", web_check)
     step("app window", window_check)
+    step("meeting detection", meetings_check)
     if args.transcribe:
         step("transcription", transcribe_check)
 

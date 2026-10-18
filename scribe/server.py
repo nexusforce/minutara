@@ -329,7 +329,7 @@ EDITABLE_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "whisper_model", "whisper_device",
     "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
-    "meeting_detect", "meeting_apps", "meeting_browsers", "floating_recorder",
+    "meeting_detect", "meeting_apps", "meeting_titles", "meeting_browsers", "floating_recorder",
     "delete_from_device", "pocket_base_url", "usb_volume_label", "usb_record_dir",
 )
 
@@ -610,6 +610,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             "speaker_device": cfg.speaker_device,
             "meeting_detect": cfg.meeting_detect,
             "meeting_apps": cfg.meeting_apps,
+            "meeting_titles": cfg.meeting_titles,
             "meeting_browsers": cfg.meeting_browsers,
             "floating_recorder": cfg.floating_recorder,
             "auto_transcribe": cfg.auto_transcribe,

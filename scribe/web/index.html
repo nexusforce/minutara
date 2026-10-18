@@ -226,11 +226,11 @@
         <h2 class="group">Meetings</h2>
         <div class="card rows">
           <div class="srow">
-            <div class="stext"><b>Detect meetings</b><small>When Zoom, Teams or Webex starts using your microphone, a small pop-up offers to start recording. Works while Scribe is open, even minimized.</small></div>
+            <div class="stext"><b>Detect meetings</b><small>When Zoom, Teams or Webex starts using your microphone (the app, or Teams, Meet and Zoom in a web browser), a small pop-up offers to start recording. Works while Scribe is open, even minimized.</small></div>
             <label class="switch"><input type="checkbox" data-key="meeting_detect"><span></span></label>
           </div>
           <div class="srow">
-            <div class="stext"><b>Floating recorder</b><small>While recording, a small window with the timer, pause and stop stays on top whenever Scribe's window isn't in front. Drag it anywhere; the – button tucks it away for the rest of that recording.</small></div>
+            <div class="stext"><b>Floating recorder</b><small>While recording, a small window with the timer, pause and stop stays on top whenever Scribe's window isn't in front. Drag it anywhere; the – button tucks it away for the rest of that recording.</small><small class="warn" id="m-unavail" hidden></small></div>
             <label class="switch"><input type="checkbox" data-key="floating_recorder"><span></span></label>
           </div>
           <div class="srow">
@@ -240,7 +240,8 @@
           <details class="adv">
             <summary>Advanced</summary>
             <div class="srow"><div class="stext"><b>Meeting apps</b><small>Parts of the app names to watch for, separated by commas. Add one if your meeting app isn't caught.</small></div><input class="field wide" data-key="meeting_apps" spellcheck="false"></div>
-            <div class="srow"><div class="stext"><b>Also watch web browsers</b><small>For Google Meet or Teams in a browser. Any web page using your mic will then count as a meeting.</small></div><label class="switch"><input type="checkbox" data-key="meeting_browsers"><span></span></label></div>
+            <div class="srow"><div class="stext"><b>Meeting page titles</b><small>Teams, Google Meet or Zoom in a web browser count when the browser is using your mic and one of its windows is titled with one of these.</small></div><input class="field wide" data-key="meeting_titles" spellcheck="false"></div>
+            <div class="srow"><div class="stext"><b>Any web page using the mic</b><small>Count every browser mic use as a meeting, whatever the page.</small></div><label class="switch"><input type="checkbox" data-key="meeting_browsers"><span></span></label></div>
           </details>
         </div>
 
