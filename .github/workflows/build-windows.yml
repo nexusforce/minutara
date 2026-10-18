@@ -172,9 +172,9 @@ jobs:
             $fw = (Invoke-RestMethod "http://127.0.0.1:$port/api/status?token=$token").widget
             $visible = [Win32]::IsWindowVisible([Win32]::FindWindow($null, "Scribe recorder"))
           } while ((Get-Date) -lt $deadline -and -not ($visible -and $fw.page_mode -eq "recording"))
-          Write-Host "floating recorder: visible=$visible $($fw | ConvertTo-Json -Compress)"
+          Write-Host "floating recorder: visible=$visible $($fw | ConvertTo-Json -Compress -Depth 4)"
+          Get-Content scribe.log | Select-String "floating window" | Select-Object -Last 12
           if (-not $visible -or $fw.page_mode -ne "recording") { throw "the floating recorder didn't appear" }
-          Get-Content scribe.log | Select-String "floating window" | Select-Object -Last 6
 
           # Closing the main window quits Scribe (the hidden floating window
           # mustn't keep it running).

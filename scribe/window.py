@@ -176,6 +176,7 @@ class WidgetUI:
         self.q: "queue.Queue" = queue.Queue()
         self.size = (0, 0)
         self.visible = False
+        self.last = ""          # what the last show/hide did, for status and the log
 
     # -- set-up (main thread, before webview.start) --------------------------
     def create(self, main) -> None:
@@ -253,8 +254,10 @@ class WidgetUI:
                     else:
                         self.visible = False
                         self.win.hide()
+                        self.last = "hidden"
                 except Exception as e:
-                    log.warning("floating window %s failed: %s", op, e)
+                    self.last = f"{op} failed: {e.__class__.__name__}: {e}"
+                    log.warning("floating window %s failed: %s", op, e, exc_info=True)
                 finally:
                     done.set()
 
@@ -276,10 +279,39 @@ class WidgetUI:
         self.win.move(x, y)
         self.visible = True
         self.win.show()
+        # Make sure Windows really shows it: if the window still isn't on
+        # screen, show it directly, on top and without taking focus from the
+        # meeting app.
+        hwnd = self.hwnd()
+        if hwnd and not _user32().IsWindowVisible(hwnd):
+            _user32().ShowWindow(hwnd, 4)            # SW_SHOWNOACTIVATE
+            _user32().SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040)
+            self.last = f"shown {mode} (directly); visible={bool(_user32().IsWindowVisible(hwnd))}"
+        else:
+            self.last = f"shown {mode}; visible={bool(hwnd and _user32().IsWindowVisible(hwnd))}"
         # Tell the page which face to draw, without waiting for it: a page
         # that's been hidden a while can be slow to answer, and the window
         # must appear regardless. (The page also checks for itself.)
         threading.Thread(target=self._tell_page, args=(mode,), daemon=True).start()
+
+    def hwnd(self) -> int:
+        """The floating window's Windows handle (0 if it isn't there)."""
+        try:
+            return int(self.win.native.Handle.ToInt64())
+        except Exception:
+            try:
+                return int(_user32().FindWindowW(None, self.TITLE) or 0)
+            except Exception:
+                return 0
+
+    def native_state(self) -> dict:
+        """What Windows itself says about the floating window."""
+        try:
+            h = self.hwnd()
+            return {"found": bool(h), "visible": bool(h and _user32().IsWindowVisible(h)),
+                    "last": self.last}
+        except Exception as e:
+            return {"found": False, "visible": False, "last": self.last, "error": str(e)}
 
     def _tell_page(self, mode: str) -> None:
         try:
@@ -299,6 +331,21 @@ class WidgetUI:
         else:
             x, y = sw - w - 24, sh - h - 88   # clear of the taskbar
         return max(0, min(x, sw - w)), max(0, min(y, sh - h))
+
+
+def _user32():
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    if not getattr(u, "_scribe_typed", False):
+        u.FindWindowW.restype = wintypes.HWND
+        u.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        u.IsWindowVisible.argtypes = [wintypes.HWND]
+        u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                   ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        u._scribe_typed = True
+    return u
 
 
 def _parse_pos(text: str):

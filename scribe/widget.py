@@ -124,7 +124,14 @@ class WidgetController:
                 reason = last_error
             except Exception:
                 pass
+        native = {}
+        try:
+            if self.ui is not None and hasattr(self.ui, "native_state") and self.available():
+                native = self.ui.native_state()
+        except Exception:
+            pass
         return {"available": self.available(), "mode": self.mode, "reason": reason,
+                "native": native,
                 "app": m["app"] or m["ended"], "preview": m.get("preview", False),
                 "preview_face": self.preview_face if time.monotonic() < self.preview_until else "",
                 "page_mode": self.page_mode,
