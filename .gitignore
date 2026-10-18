@@ -29,3 +29,6 @@ Thumbs.db
 # Build intermediates
 build/scribe/
 build/scribe.ico
+
+# Auto-saved meeting documents (private)
+Meeting notes/

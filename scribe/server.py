@@ -27,7 +27,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import ai, granola, notes
+from . import ai, export, granola, notes
 from . import config as config_mod
 from .config import AI_DEFAULTS, APP_ROOT, GRANOLA_DEFAULTS, Config
 from .log import LOG_PATH, get
@@ -84,6 +84,7 @@ class Transcriber:
                 process(path, self.cfg, title=title or path.stem,
                         duration_s=duration_s, recorded_at=recorded_at)
                 notes.update(self.cfg, path.stem, error="")
+                export.schedule(self.cfg, path.stem)
                 self.last_message = f"Transcribed {self.current_title}"
                 if self.after:
                     self.after(path.stem)
@@ -163,6 +164,7 @@ class Summarizer:
                 if (n.get("summary_meta") or {}).get("provider") == "granola" and not n.get("granola_summary"):
                     fields["granola_summary"] = n.get("summary", "")
                 notes.update(self.cfg, nid, **fields)
+                export.schedule(self.cfg, nid)
                 self.last_message = f"Wrote AI notes for {self.current_title}"
             except ai.AIError as e:
                 notes.update(self.cfg, nid, summary_error=str(e))
@@ -331,8 +333,16 @@ EDITABLE_KEYS = (
     "pocket_api_key", "whisper_model", "whisper_device",
     "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
     "meeting_detect", "meeting_apps", "meeting_titles", "meeting_browsers", "floating_recorder",
+    "auto_export", "export_format",
     "delete_from_device", "pocket_base_url", "usb_volume_label", "usb_record_dir",
 )
+
+
+def _attachment(name: str) -> str:
+    """Content-Disposition for a download whose name may hold any character."""
+    from urllib.parse import quote
+    ascii_name = name.encode("ascii", "replace").decode().replace('"', "'")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
 
 
 def _shutdown() -> None:
@@ -517,6 +527,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             fields["folder"] = notes.clean_folder(data["folder"])
         if notes.update(cfg, note_id, **fields) is None:
             return fail(404, "No such note.")
+        export.schedule(cfg, note_id)
         if "title" in fields and note_id == rec.note_id:
             rec.title = fields["title"]
         if fields.get("folder"):
@@ -535,6 +546,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         if name and (name == t["name"] or name in t["pending"]):
             return fail(409, "Wait for the transcription to finish first.")
         notes.delete(cfg, note_id)
+        export.forget(cfg, n)
         from .listen import forget
         forget(cfg.cache_dir, note_id)
         return jsonify({"ok": True})
@@ -581,6 +593,62 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         return send_from_directory(t.parent, t.name,
                                    as_attachment=bool(request.args.get("download")))
 
+    # --- export -------------------------------------------------------------
+
+    def _fmt() -> str:
+        f = request.args.get("format") or cfg.export_format
+        return f if f in export.FORMATS else "txt"
+
+    def _parts() -> list[str]:
+        given = [p for p in (request.args.get("parts") or "").split(",") if p in export.PARTS]
+        return given or list(export.PARTS)
+
+    @app.get("/api/notes/<note_id>/export")
+    def export_note(note_id: str):
+        """One meeting: ?part=summary|notes|transcript for one part, or the
+        whole document (?parts=… picks which). ?copy=1 returns the text
+        instead of a file, for the Copy buttons."""
+        n = notes.load(cfg, note_id)
+        if n is None:
+            return fail(404, "No such note.")
+        fmt, part = _fmt(), request.args.get("part", "")
+        if part in export.PARTS:
+            text = export.single_part(cfg, n, part, fmt)
+            name = export.filename(n, fmt, export.PART_TITLES[part])
+        else:
+            text = export.document(cfg, n, _parts(), fmt)
+            name = export.filename(n, fmt)
+        if request.args.get("copy"):
+            return Response(text, mimetype="text/plain; charset=utf-8")
+        mime = "text/markdown" if fmt == "md" else "text/plain"
+        return Response(text.encode("utf-8"), mimetype=f"{mime}; charset=utf-8", headers={
+            "Content-Disposition": _attachment(name)})
+
+    @app.get("/api/export")
+    def export_everything():
+        """Every meeting (or ?folder=) as a zip of documents, optionally with recordings."""
+        folder = notes.clean_folder(request.args.get("folder", "")) if request.args.get("folder") else ""
+        try:
+            path = export.export_all(cfg, _parts(), _fmt(), bool(request.args.get("audio")), folder)
+        except Exception as e:
+            log.exception("export failed")
+            return fail(500, f"Export failed: {e}")
+        return send_from_directory(path.parent, path.name, as_attachment=True,
+                                   download_name=path.name)
+
+    @app.post("/api/export/save-all")
+    def export_save_all():
+        n = export.save_all(cfg)
+        return jsonify({"ok": True, "message": f"Saved {n} meeting{'s' if n != 1 else ''} to {cfg.export_dir}."})
+
+    @app.post("/api/export/open-folder")
+    def export_open_folder():
+        cfg.export_dir.mkdir(parents=True, exist_ok=True)
+        if sys.platform != "win32":
+            return fail(400, f"The folder is {cfg.export_dir}.")
+        os.startfile(str(cfg.export_dir))   # noqa: S606 — opens Explorer on our own folder
+        return jsonify({"ok": True})
+
     @app.get("/api/folders")
     def list_folders():
         return jsonify({"folders": notes.folders(cfg)})
@@ -614,6 +682,9 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             "meeting_titles": cfg.meeting_titles,
             "meeting_browsers": cfg.meeting_browsers,
             "floating_recorder": cfg.floating_recorder,
+            "auto_export": cfg.auto_export,
+            "export_format": cfg.export_format,
+            "export_dir": str(cfg.export_dir),
             "auto_transcribe": cfg.auto_transcribe,
             "recordings_dir": str(cfg.recordings_dir),
             "use_pocket_api": cfg.use_pocket_api,
@@ -644,6 +715,11 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             if key == "pocket_api_key" and not str(data[key]).strip():
                 continue
             setattr(cfg, key, config_mod._coerce(data[key], getattr(defaults, key)))
+        if str(data.get("export_dir", "")).strip():
+            cfg.export_dir = config_mod.resolve_dir(data["export_dir"])
+            cfg.export_dir.mkdir(parents=True, exist_ok=True)
+        if cfg.export_format not in export.FORMATS:
+            cfg.export_format = "txt"
         if str(data.get("recordings_dir", "")).strip():
             cfg.recordings_dir = config_mod.resolve_dir(data["recordings_dir"])
             cfg.recordings_dir.mkdir(parents=True, exist_ok=True)
@@ -1161,6 +1237,9 @@ def serve(cfg: Config, open_browser: bool = False) -> None:
         return
 
     app, rec = create_app(cfg)
+    if cfg.auto_export and not cfg.export_dir.exists():
+        # First run with the copies folder: fill it with the meetings you already have.
+        threading.Thread(target=export.save_all, args=(cfg,), daemon=True, name="export").start()
     lan_url = f"http://{local_ip()}:{cfg.server_port}/?token={cfg.server_token}"
 
     log.info("serving on port %s (log: %s)", cfg.server_port, LOG_PATH)

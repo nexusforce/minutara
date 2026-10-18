@@ -495,7 +495,8 @@ function renderSummary(n) {
     head.innerHTML = `<span>${esc(by)}${when ? " · " + esc(when) : ""}</span><span class="grow"></span>` +
       (busy ? `<span class="dock-tag"><span class="lamp busy"></span>Rewriting…</span>`
         : (S.ai.enabled ? `<button class="btn sm" data-ai-act="gen">${icon("refresh")}Regenerate</button>` : "")) +
-      `<button class="btn sm" data-ai-act="copy">${icon("copy")}Copy</button>`;
+      `<button class="btn sm" data-ai-act="copy">${icon("copy")}Copy</button>` +
+      `<button class="btn sm" data-ai-act="download">${icon("download")}Download</button>`;
     if (box.dataset.for !== n.id + ":" + n.summary.length) {
       box.innerHTML = md(n.summary);
       box.dataset.for = n.id + ":" + n.summary.length;
@@ -527,10 +528,40 @@ $("#tab-ai").addEventListener("click", async e => {
   if (!b || !S.note) return;
   if (b.dataset.aiAct === "setup") { setTimeout(() => $("#s-ai").scrollIntoView(), 300); return; }
   if (b.dataset.aiAct === "copy") { copyText(S.note.summary, b); return; }
+  if (b.dataset.aiAct === "download") { download(noteUrl(S.noteId, "/export?part=summary")); return; }
   const r = await send("POST", noteUrl(S.noteId, "/summarize"));
   toast(r.message || (r.ok ? "Writing AI notes…" : "Couldn't start AI notes."));
   await poll();
   refreshSoon();
+});
+
+// A file download: opens the Save dialog in Scribe's window, or the browser's download.
+function download(path) {
+  const a = document.createElement("a");
+  a.href = withToken(path);
+  a.download = "";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+async function copyFrom(path, btn) {
+  try {
+    const r = await api(path);
+    if (!r.ok) throw new Error();
+    await copyText(await r.text(), btn);
+    return true;
+  } catch { toast("Couldn't copy that."); return false; }
+}
+
+// Copy / Download on the My notes and Transcript tabs.
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-copy-part], [data-dl-part]");
+  if (!b || !S.note) return;
+  const part = b.closest("[data-part]").dataset.part;
+  if (b.hasAttribute("data-dl-part")) {
+    if (part === "notes") await flushNote();
+    download(noteUrl(S.noteId, `/export?part=${part}`));
+  } else if (part === "notes") copyText($("#n-body").value, b);   // includes what you just typed
+  else copyFrom(noteUrl(S.noteId, `/export?part=${part}&copy=1`), b);
 });
 
 async function copyText(text, btn) {
@@ -599,10 +630,9 @@ function renderNoteMeta(n) {
   $("#n-src span").textContent = SOURCE[n.source] || "This PC";
   renderFolderSelect(n.folder);
   const busy = ["transcribing", "queued", ...LIVE].includes(n.status);
+  $("#t-tools").hidden = !n.has_transcript;
   $("#m-audio").hidden = !n.has_audio;
   $("#m-audio").href = withToken(noteUrl(n.id, "/audio?download=1"));
-  $("#m-transcript").hidden = !n.has_transcript;
-  $("#m-transcript").href = withToken(noteUrl(n.id, "/transcript?download=1"));
   $("#m-retranscribe").hidden = !n.has_audio || busy;
   $("#m-retranscribe").lastChild.textContent = n.has_transcript ? "Transcribe again" : "Transcribe";
 }
@@ -788,7 +818,16 @@ function closeMenu() { $("#more-menu").hidden = true; }
 $("#more-btn").onclick = e => { e.stopPropagation(); $("#more-menu").hidden = !$("#more-menu").hidden; };
 document.addEventListener("click", e => { if (!e.target.closest(".menu-wrap")) closeMenu(); });
 $("#m-audio").onclick = closeMenu;
-$("#m-transcript").onclick = closeMenu;
+$("#m-all").onclick = async e => {
+  e.preventDefault(); closeMenu();
+  await flushNote();   // include what you just typed
+  download(noteUrl(S.noteId, "/export"));
+};
+$("#m-copy-all").onclick = async e => {
+  closeMenu();
+  await flushNote();
+  if (await copyFrom(noteUrl(S.noteId, "/export?copy=1"), null)) toast("Copied the whole meeting");
+};
 $("#m-retranscribe").onclick = () => { closeMenu(); transcribeNote(); };
 $("#m-delete").onclick = async () => {
   closeMenu();
@@ -897,8 +936,38 @@ async function loadSettings() {
   renderAI();
   renderGranola();
   loadDevices(c.mic_device, c.speaker_device);
+  fillExportFolders();
   pollSettings();
 }
+
+// --- export -------------------------------------------------------------------
+async function fillExportFolders() {
+  try { S.folders = (await getJSON("/api/folders")).folders; } catch {}
+  const sel = $("#x-folder"), keep = sel.value;
+  sel.innerHTML = `<option value="">All meetings</option>` +
+    (S.folders || []).map(f => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join("");
+  sel.value = (S.folders || []).some(f => f.name === keep) ? keep : "";
+}
+$("#x-export").onclick = () => {
+  const parts = ["summary", "notes", "transcript"].filter(p => $(`#x-${p}`).checked);
+  if (!parts.length) { toast("Pick at least one of AI notes, My notes or Transcript."); return; }
+  const q = new URLSearchParams({ parts: parts.join(",") });
+  if ($("#x-audio").checked) q.set("audio", "1");
+  if ($("#x-folder").value) q.set("folder", $("#x-folder").value);
+  download(`/api/export?${q}`);
+  toast($("#x-audio").checked ? "Exporting… recordings make this take a while." : "Exporting…");
+};
+$("#x-open").onclick = async () => {
+  const r = await send("POST", "/api/export/open-folder");
+  if (!r.ok) $("#x-msg").textContent = r.message || "Couldn't open the folder.";
+};
+$("#x-save-all").onclick = async () => {
+  const b = $("#x-save-all");
+  b.disabled = true;
+  const r = await send("POST", "/api/export/save-all");
+  b.disabled = false;
+  $("#x-msg").textContent = r.message || (r.ok ? "Saved." : "Couldn't save.");
+};
 const reloadConfig = async () => { S.config = await getJSON("/api/config"); };
 async function saveConfig(body, msg = "Saved") {
   const r = await send("POST", "/api/config", body);
@@ -1280,7 +1349,7 @@ $("#view-settings").addEventListener("change", async e => {
   const k = el.dataset.key;
   const v = el.type === "checkbox" ? el.checked : el.value.trim();
   if (k === "pocket_api_key" && !v) return;
-  if (["me_label", "them_label", "recordings_dir"].includes(k) && !v) { el.value = S.config[k]; return; }
+  if (["me_label", "them_label", "recordings_dir", "export_dir"].includes(k) && !v) { el.value = S.config[k]; return; }
   const r = await send("POST", "/api/config", { [k]: v });
   if (!r.ok) { toast("Couldn't save that setting."); return; }
   toast("Saved");

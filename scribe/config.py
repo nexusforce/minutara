@@ -130,6 +130,10 @@ class Config:
     floating_recorder: bool = True     # small on-top recorder while Scribe's window isn't in front
     widget_pos: str = ""               # where you last dragged it ("x,y"); "" = bottom right
 
+    # --- Export ---
+    auto_export: bool = True           # keep a readable copy of each meeting in export_dir
+    export_format: str = "txt"         # "txt" (opens anywhere) or "md" (Markdown)
+
     # --- USB ingest ---
     usb_volume_label: str = "POCKET"
     usb_record_dir: str = "RECORD"
@@ -153,6 +157,7 @@ class Config:
     manifest_path: Path = field(default_factory=lambda: APP_ROOT / "ingested.json")
     archive_dir: Path = field(default_factory=lambda: APP_ROOT / "granola_archive")
     cache_dir: Path = field(default_factory=lambda: APP_ROOT / "cache")
+    export_dir: Path = field(default_factory=lambda: APP_ROOT / "Meeting notes")
 
     def ensure_dirs(self) -> None:
         for d in (self.recordings_dir, self.transcripts_dir, self.notes_dir,
@@ -173,6 +178,7 @@ FLAT_KEYS = (
     "pocket_api_key", "pocket_base_url", "whisper_model", "whisper_device",
     "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
     "meeting_detect", "meeting_apps", "meeting_titles", "meeting_browsers", "floating_recorder", "widget_pos",
+    "auto_export", "export_format",
     "usb_volume_label", "usb_record_dir",
     "delete_from_device", "server_port", "server_token",
 )
@@ -281,6 +287,8 @@ def load() -> Config:
 
     if "recordings_dir" in file_data:
         cfg.recordings_dir = resolve_dir(file_data["recordings_dir"])
+    if "export_dir" in file_data:
+        cfg.export_dir = resolve_dir(file_data["export_dir"])
     env_dir = os.environ.get("SCRIBE_RECORDINGS_DIR")
     if env_dir:
         cfg.recordings_dir = resolve_dir(env_dir)
@@ -306,6 +314,7 @@ def load() -> Config:
 def save(cfg: Config) -> None:
     data = {key: getattr(cfg, key) for key in FLAT_KEYS}
     data["recordings_dir"] = str(cfg.recordings_dir)
+    data["export_dir"] = str(cfg.export_dir)
     data["ai"] = cfg.ai
     data["granola"] = cfg.granola
     tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
