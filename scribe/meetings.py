@@ -167,7 +167,7 @@ def mic_users() -> list[str]:
 def _exe_of(pid: int) -> str:
     import ctypes
     from ctypes import wintypes
-    k32 = ctypes.windll.kernel32
+    k32 = ctypes.WinDLL("kernel32")   # a private handle: typing the shared one affects other code
     k32.OpenProcess.restype = wintypes.HANDLE
     k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     k32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
@@ -192,7 +192,7 @@ def window_titles() -> list[tuple[str, str]]:
         return []
     import ctypes
     from ctypes import wintypes
-    user32 = ctypes.windll.user32
+    user32 = ctypes.WinDLL("user32")
     out: list[tuple[str, str]] = []
     exes: dict[int, str] = {}
 

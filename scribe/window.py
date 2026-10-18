@@ -272,13 +272,22 @@ class WidgetUI:
     def _do_show(self, mode: str, size: tuple[int, int]) -> None:
         import webview
         w, h = size
-        if (w, h) != self.size:
-            self.win.resize(w, h)
-            self.size = (w, h)
-        x, y = self._place(w, h, webview)
-        self.win.move(x, y)
+        problems = []
+        for step in ("resize", "move", "show"):   # each on its own: one failing mustn't stop the rest
+            try:
+                if step == "resize" and (w, h) != self.size:
+                    self.win.resize(w, h)
+                    self.size = (w, h)
+                elif step == "move":
+                    x, y = self._place(w, h, webview)
+                    self.win.move(x, y)
+                elif step == "show":
+                    self.win.show()
+            except Exception as e:
+                problems.append(f"{step}: {e}")
+        if problems:
+            log.warning("floating window: %s", "; ".join(problems))
         self.visible = True
-        self.win.show()
         # Make sure Windows really shows it: if the window still isn't on
         # screen, show it directly, on top and without taking focus from the
         # meeting app.
@@ -333,19 +342,28 @@ class WidgetUI:
         return max(0, min(x, sw - w)), max(0, min(y, sh - h))
 
 
+_u32 = None
+
+
 def _user32():
-    import ctypes
-    from ctypes import wintypes
-    u = ctypes.windll.user32
-    if not getattr(u, "_scribe_typed", False):
+    """
+    Scribe's own handle on user32.dll. A private one: the window library
+    calls the shared ctypes.windll.user32 with loosely typed arguments, and
+    declaring types on the shared one broke its calls.
+    """
+    global _u32
+    if _u32 is None:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.WinDLL("user32")
         u.FindWindowW.restype = wintypes.HWND
         u.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
         u.IsWindowVisible.argtypes = [wintypes.HWND]
         u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
         u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                    ctypes.c_int, ctypes.c_int, ctypes.c_uint]
-        u._scribe_typed = True
-    return u
+        _u32 = u
+    return _u32
 
 
 def _parse_pos(text: str):
