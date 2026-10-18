@@ -108,7 +108,14 @@ class WidgetController:
 
     def state(self) -> dict:
         m = self.watcher.snapshot()
-        return {"available": self.available(), "mode": self.mode,
+        reason = ""
+        if not self.available():
+            try:
+                from .window import last_error
+                reason = last_error
+            except Exception:
+                pass
+        return {"available": self.available(), "mode": self.mode, "reason": reason,
                 "app": m["app"] or m["ended"], "preview": m.get("preview", False),
                 "page_mode": self.page_mode,
                 "page_seen_ago": round(time.time() - self.page_seen, 1) if self.page_seen else None}

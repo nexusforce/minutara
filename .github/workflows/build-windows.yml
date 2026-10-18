@@ -35,6 +35,8 @@ jobs:
           python build\make_icon.py
           python -m PyInstaller build\scribe.spec --noconfirm --clean
           Copy-Item README.md, LICENSE -Destination dist\Scribe
+          Copy-Item build\exe.config dist\Scribe\Scribe.exe.config
+          Copy-Item build\exe.config dist\Scribe\scribe-cli.exe.config
 
       - name: Zip
         run: 7z a -tzip -mx=5 Scribe-windows.zip .\dist\Scribe | Select-Object -Last 3
@@ -46,6 +48,25 @@ jobs:
         run: |
           7z x Scribe-windows.zip -osmoke | Select-Object -Last 2
           Set-Location smoke\Scribe
+
+          # Mark every file as downloaded from the internet, as Windows does
+          # when a downloaded zip is extracted without "Unblock" first.
+          Get-ChildItem -Recurse -File | ForEach-Object {
+            Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+          }
+          Write-Host "marked $((Get-ChildItem -Recurse -File).Count) files as downloaded"
+          # (The two .exe files are left unmarked: a marked .exe started from a
+          # script can stop at a security prompt. You click past it at home.)
+          Get-ChildItem *.exe | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Stream Zone.Identifier }
+
+          # For the record: with neither fix, does the mark break the window library?
+          Rename-Item Scribe.exe.config Scribe.exe.config.off
+          Rename-Item scribe-cli.exe.config scribe-cli.exe.config.off
+          $env:SCRIBE_NO_UNBLOCK = "1"
+          Write-Host "without the fixes: $(.\scribe-cli.exe doctor | Select-String 'app window')"
+          Remove-Item Env:SCRIBE_NO_UNBLOCK
+          Rename-Item Scribe.exe.config.off Scribe.exe.config
+          Rename-Item scribe-cli.exe.config.off scribe-cli.exe.config
 
           .\scribe-cli.exe doctor --transcribe
           if ($LASTEXITCODE -ne 0) { throw "doctor reported a failure" }
@@ -99,6 +120,40 @@ jobs:
           Write-Host "floating window: $($fw | ConvertTo-Json -Compress)"
           if ($fw.mode -ne "prompt" -or $fw.page_mode -ne "prompt") { throw "the floating window didn't show the meeting pop-up" }
           Invoke-RestMethod -Method Post "http://127.0.0.1:$port/api/meeting/dismiss?token=$token" | Out-Null
+
+          # Meeting detection, through the real registry and real windows:
+          # pretend Zoom, then Teams in Edge, take the microphone.
+          $micKey = "Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged"
+          function Set-MicUse($exe, $inUse) {
+            $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("$micKey\$($exe.Replace('\', '#'))")
+            $k.SetValue("LastUsedTimeStart", [long]1, [Microsoft.Win32.RegistryValueKind]::QWord)
+            $k.SetValue("LastUsedTimeStop", [long]$(if ($inUse) { 0 } else { 2 }), [Microsoft.Win32.RegistryValueKind]::QWord)
+            $k.Close()
+          }
+          function Wait-Meeting($want) {
+            $deadline = (Get-Date).AddSeconds(20)
+            do {
+              Start-Sleep -Seconds 1
+              $m = (Invoke-RestMethod "http://127.0.0.1:$port/api/status?token=$token").meeting
+            } while ((Get-Date) -lt $deadline -and $m.app -ne $want)
+            Write-Host "meeting: '$($m.app)' (wanted '$want')"
+            if ($m.app -ne $want) { throw "meeting detection: expected '$want', got '$($m.app)'" }
+          }
+          $zoom = "C:\Users\runner\AppData\Roaming\Zoom\bin\Zoom.exe"
+          Set-MicUse $zoom $true
+          Wait-Meeting "Zoom"
+          Set-MicUse $zoom $false
+          Wait-Meeting ""
+
+          $edgeExe = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          $edge = Start-Process $edgeExe -PassThru -ArgumentList "--user-data-dir=$env:RUNNER_TEMP\edge-meet", "--no-first-run", "--app=data:text/html,<title>Standup%20%7C%20Microsoft%20Teams</title>"
+          Start-Sleep -Seconds 5
+          Set-MicUse $edgeExe $true
+          Wait-Meeting "Teams"
+          Set-MicUse $edgeExe $false
+          Wait-Meeting ""
+          Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Content scribe.log | Select-String "microphone in use|meeting detected|meeting ended" | Select-Object -Last 8
 
           # Closing the main window quits Scribe (the hidden floating window
           # mustn't keep it running).

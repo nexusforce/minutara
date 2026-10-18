@@ -15,6 +15,8 @@ python -m pip install -r requirements.txt pyinstaller pillow
 python build\make_icon.py
 python -m PyInstaller build\scribe.spec --noconfirm --clean
 Copy-Item README.md, LICENSE -Destination dist\Scribe -Force
+Copy-Item build\exe.config dist\Scribe\Scribe.exe.config -Force
+Copy-Item build\exe.config dist\Scribe\scribe-cli.exe.config -Force
 
 Write-Host ""
 Write-Host "Built dist\Scribe\Scribe.exe" -ForegroundColor Green
