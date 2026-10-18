@@ -170,7 +170,8 @@ jobs:
           do {
             Start-Sleep -Milliseconds 500
             $fw = (Invoke-RestMethod "http://127.0.0.1:$port/api/status?token=$token").widget
-            $visible = [Win32]::IsWindowVisible([Win32]::FindWindow($null, "Scribe recorder"))
+            # ([NullString]::Value, not $null: PowerShell turns $null into "" for a string parameter)
+            $visible = [Win32]::IsWindowVisible([Win32]::FindWindow([NullString]::Value, "Scribe recorder"))
           } while ((Get-Date) -lt $deadline -and -not ($visible -and $fw.page_mode -eq "recording"))
           Write-Host "floating recorder: visible=$visible $($fw | ConvertTo-Json -Compress -Depth 4)"
           Get-Content scribe.log | Select-String "floating window" | Select-Object -Last 12
