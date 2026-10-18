@@ -249,6 +249,10 @@ async function poll() {
 // "meeting detected" prompt shows inside the app instead.
 function renderMeetCard(s) {
   const m = s.meeting || {}, w = s.widget || {};
+  const live = $("#m-live");
+  if (live) live.textContent = !m.enabled ? "" : m.app
+    ? `Right now: ${m.app} meeting detected.`
+    : `Right now: microphone in use by ${m.mic_users || "nothing"}${m.error ? ` (detection error: ${m.error})` : ""}.`;
   const un = $("#m-unavail");
   un.hidden = !!w.available || !w.reason;
   if (w.reason) un.textContent = `Not available right now: ${w.reason}. See the log for details.`;
@@ -1184,6 +1188,9 @@ $("#view-settings").addEventListener("click", async e => {
     pollSettings(); poll();
   } else if (id === "gr-stop") {
     await send("POST", "/api/granola/stop"); toast("Stopping after the current meeting…");
+  } else if (id === "m-rec-preview") {
+    const r = await send("POST", "/api/widget/preview", { face: "recording" });
+    $("#m-rec-msg").textContent = r.message || "";
   } else if (id === "m-preview") {
     const r = await send("POST", "/api/meeting/preview");
     $("#m-msg").textContent = r.message || "Couldn't show the preview.";

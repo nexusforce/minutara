@@ -155,6 +155,27 @@ jobs:
           Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Get-Content scribe.log | Select-String "microphone in use|meeting detected|meeting ended" | Select-Object -Last 8
 
+          # The floating recorder: show its recording face (Settings' preview)
+          # and ask Windows whether the window is really on screen.
+          Add-Type -TypeDefinition @"
+          using System; using System.Runtime.InteropServices;
+          public static class Win32 {
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);
+            [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+          }
+          "@
+          Start-Sleep -Seconds 3
+          Invoke-RestMethod -Method Post "http://127.0.0.1:$port/api/widget/preview?token=$token" -ContentType "application/json" -Body '{"face":"recording"}' | Out-Null
+          $deadline = (Get-Date).AddSeconds(10)
+          do {
+            Start-Sleep -Milliseconds 500
+            $fw = (Invoke-RestMethod "http://127.0.0.1:$port/api/status?token=$token").widget
+            $visible = [Win32]::IsWindowVisible([Win32]::FindWindow($null, "Scribe recorder"))
+          } while ((Get-Date) -lt $deadline -and -not ($visible -and $fw.page_mode -eq "recording"))
+          Write-Host "floating recorder: visible=$visible $($fw | ConvertTo-Json -Compress)"
+          if (-not $visible -or $fw.page_mode -ne "recording") { throw "the floating recorder didn't appear" }
+          Get-Content scribe.log | Select-String "floating window" | Select-Object -Last 6
+
           # Closing the main window quits Scribe (the hidden floating window
           # mustn't keep it running).
           $win.CloseMainWindow() | Out-Null

@@ -19,6 +19,7 @@ import os
 import queue
 import re
 import socket
+import sys
 import threading
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -726,6 +727,15 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         return jsonify({"ok": True, "widget": widget.available(),
                         "message": "Showing the meeting pop-up for 20 seconds."})
 
+    @app.post("/api/widget/preview")
+    def widget_preview():
+        """Settings → Floating recorder → Show me."""
+        widget.preview(str((request.get_json(silent=True) or {}).get("face", "recording")), 10)
+        if not widget.available():
+            return fail(409, "The floating window isn't available: " +
+                        (widget.state().get("reason") or "Scribe is open in a browser window."))
+        return jsonify({"ok": True, "message": "Showing the floating recorder for 10 seconds."})
+
     @app.post("/api/widget/hide")
     def widget_hide():
         widget.hide_for_recording()
@@ -768,7 +778,7 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         if not LOG_PATH.exists():
             return Response("(no log yet)", mimetype="text/plain")
         lines = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
-        return Response("\n".join(lines[-300:]), mimetype="text/plain")
+        return Response("\n".join(lines[-600:]), mimetype="text/plain")
 
     @app.post("/api/quit")
     def quit_():
@@ -1157,10 +1167,11 @@ def serve(cfg: Config, open_browser: bool = False) -> None:
     print("\n  Scribe is up. On your phone (same Wi-Fi), open:\n")
     print(f"    {lan_url}\n")
     try:
-        import qrcode  # optional
-        qr = qrcode.QRCode(border=1)
-        qr.add_data(lan_url)
-        qr.print_ascii(invert=True)
+        if sys.stdout.isatty():   # not into the log, where it's 500 lines of blocks
+            import qrcode  # optional
+            qr = qrcode.QRCode(border=1)
+            qr.add_data(lan_url)
+            qr.print_ascii(invert=True)
     except Exception:
         pass
     print("  Windows Firewall will prompt on first run — allow it on Private networks.")

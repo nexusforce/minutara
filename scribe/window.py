@@ -14,6 +14,7 @@ import os
 import queue
 import sys
 import threading
+import time
 
 from .config import APP_ROOT
 from .log import get
@@ -122,6 +123,14 @@ def run(url: str, on_closing=None, widget=None) -> bool:
         _window.events.shown += _shown.set
         if widget is not None:
             widget.create(_window)
+        # A hidden page gets slowed to one timer tick a minute after a while;
+        # the floating window's page is hidden most of the time and must stay
+        # current, so turn that off for Scribe's windows.
+        flags = ("--disable-background-timer-throttling --disable-renderer-backgrounding "
+                 "--disable-features=ElasticOverscroll")   # (pywebview's own flag, kept)
+        extra = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+        if flags not in extra:
+            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (extra + " " + flags).strip()
         log.info("opening the app window")
         # private_mode=False keeps the page's own settings (theme, last view)
         # between runs, stored next to the app.
@@ -235,22 +244,31 @@ class WidgetUI:
             op, arg = self.q.get()
             if self.closing_app:
                 return
-            try:
-                if op == "show":
-                    self._do_show(*arg)
-                else:
-                    self.visible = False
-                    self.win.hide()
-            except Exception as e:
-                log.warning("floating window %s failed: %s", op, e)
+            done = threading.Event()
+
+            def run(op=op, arg=arg):
+                try:
+                    if op == "show":
+                        self._do_show(*arg)
+                    else:
+                        self.visible = False
+                        self.win.hide()
+                except Exception as e:
+                    log.warning("floating window %s failed: %s", op, e)
+                finally:
+                    done.set()
+
+            started = time.monotonic()
+            threading.Thread(target=run, daemon=True).start()
+            if not done.wait(8):
+                log.warning("floating window: %s is taking over 8 s; the window isn't responding", op)
+            else:
+                log.info("floating window: %s %s (%.2f s)", op,
+                         arg[0] if op == "show" else "", time.monotonic() - started)
 
     def _do_show(self, mode: str, size: tuple[int, int]) -> None:
         import webview
         w, h = size
-        try:
-            self.win.evaluate_js(f"window.scribeMode && window.scribeMode({mode!r})")
-        except Exception:
-            pass
         if (w, h) != self.size:
             self.win.resize(w, h)
             self.size = (w, h)
@@ -258,6 +276,16 @@ class WidgetUI:
         self.win.move(x, y)
         self.visible = True
         self.win.show()
+        # Tell the page which face to draw, without waiting for it: a page
+        # that's been hidden a while can be slow to answer, and the window
+        # must appear regardless. (The page also checks for itself.)
+        threading.Thread(target=self._tell_page, args=(mode,), daemon=True).start()
+
+    def _tell_page(self, mode: str) -> None:
+        try:
+            self.win.evaluate_js(f"window.scribeMode && window.scribeMode({mode!r})")
+        except Exception:
+            pass
 
     def _place(self, w: int, h: int, webview) -> tuple[int, int]:
         """Where you last left it, kept on screen; bottom right the first time."""

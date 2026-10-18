@@ -20,6 +20,7 @@ on the web) are opt-in, since any web page using the mic would count.
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -51,15 +52,22 @@ NAMES = (
 )
 
 
-def mic_users() -> list[str]:
-    """Apps Windows says are using the microphone right now (registry names)."""
+def registry_mic_users() -> list[str]:
+    """
+    Apps Windows' privacy settings record as using the microphone right now
+    (the same record behind the taskbar's mic icon). Scanned all the way
+    down, as Windows nests some entries (NonPackaged apps, and more on
+    some builds).
+    """
     if sys.platform != "win32":
         return []
     import winreg
 
     users: list[str] = []
 
-    def scan(key, prefix=""):
+    def scan(key, depth=0):
+        if depth > 4:
+            return
         i = 0
         while True:
             try:
@@ -67,19 +75,16 @@ def mic_users() -> list[str]:
             except OSError:
                 break
             i += 1
-            if name == "NonPackaged":
-                try:
-                    with winreg.OpenKey(key, name) as sub:
-                        scan(sub)
-                except OSError:
-                    pass
-                continue
             try:
-                with winreg.OpenKey(key, name) as app:
-                    stop, _ = winreg.QueryValueEx(app, "LastUsedTimeStop")
-                    start, _ = winreg.QueryValueEx(app, "LastUsedTimeStart")
-                if stop == 0 and start > 0:
-                    users.append(name.replace("#", "\\"))
+                with winreg.OpenKey(key, name) as sub:
+                    try:
+                        stop, _ = winreg.QueryValueEx(sub, "LastUsedTimeStop")
+                        start, _ = winreg.QueryValueEx(sub, "LastUsedTimeStart")
+                        if stop == 0 and start > 0:
+                            users.append(name.replace("#", "\\"))
+                    except OSError:
+                        pass
+                    scan(sub, depth + 1)
             except OSError:
                 continue
 
@@ -88,6 +93,74 @@ def mic_users() -> list[str]:
             scan(root)
     except OSError:
         pass
+    return users
+
+
+_com = threading.local()
+
+
+def audio_session_users() -> list[str]:
+    """
+    Programs recording from any microphone right now, straight from Windows'
+    audio system: every active capture session on every active microphone,
+    and the program behind it. Real time, and it doesn't depend on the
+    privacy record being kept up to date. Scribe's own recording is left out.
+    """
+    if sys.platform != "win32":
+        return []
+    import comtypes
+    from pycaw.api.audiopolicy import IAudioSessionControl2, IAudioSessionManager2
+    from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+    from pycaw.constants import CLSID_MMDeviceEnumerator
+
+    if not getattr(_com, "ready", False):
+        try:
+            comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+        except OSError:
+            pass   # this thread already has COM set up
+        _com.ready = True
+
+    me = os.getpid()
+    out: list[str] = []
+    devices = comtypes.CoCreateInstance(CLSID_MMDeviceEnumerator, IMMDeviceEnumerator,
+                                        comtypes.CLSCTX_INPROC_SERVER)
+    mics = devices.EnumAudioEndpoints(1, 1)   # capture endpoints, active only
+    for i in range(mics.GetCount()):
+        try:
+            mic = mics.Item(i)
+            mgr = mic.Activate(IAudioSessionManager2._iid_, comtypes.CLSCTX_ALL, None)
+            sessions = mgr.QueryInterface(IAudioSessionManager2).GetSessionEnumerator()
+            for j in range(sessions.GetCount()):
+                ctl = sessions.GetSession(j).QueryInterface(IAudioSessionControl2)
+                if ctl.GetState() != 1:          # AudioSessionStateActive
+                    continue
+                pid = ctl.GetProcessId()
+                if pid in (0, me):
+                    continue
+                exe = _exe_of(pid)
+                if exe and exe not in out:
+                    out.append(exe)
+        except Exception as e:   # one odd device mustn't hide the others
+            log.debug("audio sessions on microphone %d: %s", i, e)
+    return out
+
+
+_source_errors: dict[str, str] = {}
+
+
+def mic_users() -> list[str]:
+    """Everything known to be using the microphone: privacy record + audio sessions."""
+    users: list[str] = []
+    for name, source in (("registry", registry_mic_users), ("audio sessions", audio_session_users)):
+        try:
+            for u in source():
+                if u not in users:
+                    users.append(u)
+            _source_errors.pop(name, None)
+        except Exception as e:
+            if _source_errors.get(name) != str(e):
+                log.warning("meeting detection: couldn't read %s: %s", name, e)
+            _source_errors[name] = str(e)
     return users
 
 
@@ -179,9 +252,13 @@ def find_meeting(users: list[str], pats: list[str], titles=None,
     # A browser holding the mic: is one of its windows a meeting?
     browsers = {u.lower().replace("/", "\\").split("\\")[-1] for u in users
                 if any(b in u.lower() for b in BROWSERS)}
-    if browsers and titles and title_pats:
+    # Web-based apps (new Teams among them) record through an embedded
+    # browser, msedgewebview2.exe, whose windows belong to the app: then any
+    # window titled like a meeting counts.
+    webview = any("msedgewebview2" in u.lower() for u in users)
+    if (browsers or webview) and titles and title_pats:
         for exe, title in titles():
-            if exe in browsers:
+            if webview or exe in browsers:
                 name = meeting_in_title(title, title_pats)
                 if name:
                     return name
@@ -274,4 +351,5 @@ class MeetingWatcher:
         with self.lock:
             return {"app": self.app, "since": self.since, "dismissed": self.dismissed,
                     "ended": self.ended, "enabled": bool(getattr(self.cfg, "meeting_detect", True)),
-                    "preview": time.monotonic() < self.preview_until}
+                    "preview": time.monotonic() < self.preview_until,
+                    "mic_users": self.users_seen or "", "error": self.error}

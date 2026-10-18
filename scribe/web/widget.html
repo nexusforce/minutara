@@ -128,7 +128,8 @@
     const paused = S.state === "paused", saving = S.state === "saving";
     document.body.classList.toggle("paused", paused);
     $("#r-time").textContent = clock(S.elapsed);
-    $("#r-lbl").textContent = saving ? "Saving…" : paused ? "Paused" : (S.title || "Recording");
+    $("#r-lbl").textContent = w.preview_face ? "Preview: this is the floating recorder"
+      : saving ? "Saving…" : paused ? "Paused" : (S.title || "Recording");
     $("#r-pause").innerHTML = paused ? PLAY : PAUSE;
     $("#r-pause").title = paused ? "Resume" : "Pause";
     $("#r-pause").disabled = $("#r-stop").disabled = saving;
@@ -145,6 +146,7 @@
   }
   setInterval(poll, 500);
   poll();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 
   const theme = () => {
     let pref = "system";

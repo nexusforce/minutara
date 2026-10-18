@@ -49,6 +49,9 @@ def setup() -> None:
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
+    # One line per web request (the app checks its status every second)
+    # buried everything else; only failed requests are logged now.
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
     fh = RotatingFileHandler(LOG_PATH, maxBytes=1_000_000, backupCount=2,
                              encoding="utf-8")
