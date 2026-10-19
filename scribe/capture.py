@@ -410,7 +410,7 @@ def _check(stats: StreamStats) -> None:
 
 def record(out_path: Path, stop_event: threading.Event | None = None,
            mic_name: str = "", pause_event: threading.Event | None = None,
-           speaker_name: str = "") -> CaptureResult:
+           speaker_name: str = "", before_merge=None) -> CaptureResult:
     """
     Record until stop_event is set (or Ctrl+C). Writes a 16kHz stereo WAV.
     mic_name picks a specific microphone by (partial) name; "" = default.
@@ -420,7 +420,8 @@ def record(out_path: Path, stop_event: threading.Event | None = None,
     channel is still written; it only raises if nothing was captured at all.
     Each channel streams to a .part file as it goes (raw 16 kHz mono s16le),
     so a crash loses at most the last moment; the parts are merged into the
-    WAV at the end.
+    WAV at the end. before_merge() is called just before that (live
+    transcription reads the parts and must let go of them first).
     """
     stop_event = stop_event or threading.Event()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -482,6 +483,12 @@ def record(out_path: Path, stop_event: threading.Event | None = None,
             s.close()
         p.terminate()
 
+    if before_merge is not None:
+        try:
+            before_merge()
+        except Exception as e:
+            log.warning("before merging the recording: %s", e)
+
     def collect(path: Path) -> np.ndarray:
         if not path.exists():
             return np.zeros(0, dtype=np.int16)
@@ -503,8 +510,11 @@ def record(out_path: Path, stop_event: threading.Event | None = None,
         wf.setsampwidth(2)
         wf.setframerate(TARGET_RATE)
         wf.writeframes(pcm.tobytes())
-    mic_part.unlink(missing_ok=True)
-    spk_part.unlink(missing_ok=True)
+    for part in (mic_part, spk_part):
+        try:
+            part.unlink(missing_ok=True)
+        except OSError as e:   # the WAV is complete; a leftover part is harmless
+            log.warning("couldn't remove %s: %s", part.name, e)
 
     duration = n / TARGET_RATE
     log.info("recording finished: %.1f s -> %s", duration, out_path)

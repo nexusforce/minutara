@@ -123,7 +123,9 @@ def cmd_serve(args, cfg) -> None:
 
 
 def cmd_config(args, cfg) -> None:
+    from .stt import describe
     from .usb_ingest import find_pocket_drive
+    from .version import VERSION
 
     key = "set" if cfg.pocket_api_key else "not set"
     drive = find_pocket_drive(cfg.usb_volume_label, cfg.usb_record_dir)
@@ -132,7 +134,9 @@ def cmd_config(args, cfg) -> None:
   App root          {config_mod.APP_ROOT}
   Config file       {config_mod.CONFIG_PATH}
 
+  Version           {VERSION}
   Whisper           {cfg.whisper_model} on {cfg.whisper_device}
+  Transcription     {describe(cfg)}{'  (live while recording)' if cfg.live_transcribe else ''}
   Pocket drive      {drive or 'not connected'}
 
   Pocket API        {'ON' if cfg.use_pocket_api else 'off'}   (api key {key})
@@ -231,7 +235,10 @@ def cmd_doctor(args, cfg) -> None:
                 w.setframerate(16000)
                 w.writeframes(np.repeat(pcm, 2).tobytes())
             transcribe(wav, model_size=cfg.whisper_model, device=cfg.whisper_device)
-        return f"{cfg.whisper_model} loaded and ran"
+        # The live path: two cores, with the previous words as context.
+        from .stt import LocalEngine
+        LocalEngine(cfg, threads=2).run(pcm.astype(np.float32) / 32768, 0.0, "Me", prompt="Hello.")
+        return f"{cfg.whisper_model} loaded and ran (full and live)"
 
     step("Python", lambda: f"{platform.python_version()} ({platform.machine()}, "
                            f"{'packaged app' if getattr(sys, 'frozen', False) else 'source'})")
@@ -243,9 +250,22 @@ def cmd_doctor(args, cfg) -> None:
     step("app interface files", web_check)
     step("app window", window_check)
     step("meeting detection", meetings_check)
+
+    def upload_check():
+        # Cloud transcription sends FLAC (half the size of WAV).
+        import numpy as np
+
+        from .stt import _encode, describe
+        data, name, _ = _encode(np.zeros(1600, dtype=np.float32), "flac")
+        return f"{describe(cfg)}; uploads as {name.rsplit('.', 1)[-1].upper()} ({len(data)} bytes for 0.1 s)" + \
+            ("; live transcription on" if cfg.live_transcribe else "")
+
+    step("transcription service", upload_check)
     if args.transcribe:
         step("transcription", transcribe_check)
 
+    from .version import VERSION
+    print(f"  Scribe {VERSION}")
     for ok, name, detail in results:
         print(f"  {'OK  ' if ok else 'FAIL'}  {name}: {detail}")
     failed = [name for ok, name, _ in results if not ok]
@@ -255,7 +275,10 @@ def cmd_doctor(args, cfg) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from .version import VERSION
+
     p = argparse.ArgumentParser(prog="scribe")
+    p.add_argument("--version", action="version", version=f"Scribe {VERSION}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("record", help="capture a Zoom/Teams call from system audio")

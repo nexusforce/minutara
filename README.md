@@ -204,6 +204,35 @@ the – button tucks it away for the rest of that recording. Both are on by
 default and can be turned off in Settings → Meetings, which has a **Show
 me** preview for each.
 
+**Transcribe while recording** (Settings → Transcription, off by default).
+Instead of waiting until you press Stop, Scribe transcribes the meeting as it
+goes: about every 30 seconds it takes the newest audio from each side, cuts
+it at a pause so no word is split, and transcribes it, passing along the
+last words so names stay consistent. The Transcript tab shows the transcript
+so far during the meeting, and when you stop only the last moments are left,
+so it's ready in seconds rather than minutes. The built-in model uses at most
+two processor cores for this (a setting), so the call keeps priority. If it
+falls behind, or anything goes wrong, the rest is simply transcribed after
+the meeting; the recording itself is never touched. **Transcribe again** on
+a note always re-runs the whole recording in one pass.
+
+**Transcription services** (Settings → Transcription → Transcribe with). The
+built-in model is the default and nothing leaves your PC. Optionally:
+
+| Service | Notes |
+|---|---|
+| Groq | Cloud, by far the fastest: an hour-long meeting in seconds, for a few cents (`whisper-large-v3-turbo`). Key from console.groq.com, or `GROQ_API_KEY` |
+| OpenAI | Cloud. `whisper-1` gives timestamps; newer models give text only and Scribe estimates the times. `OPENAI_API_KEY` works too |
+| Your own server | Anything with OpenAI's transcription API: [Speaches](https://github.com/speaches-ai/speaches) (`http://localhost:8000/v1`) or whisper.cpp's server (`http://127.0.0.1:8080`, path `/inference`). Run it on a PC with a graphics card and point every Scribe at it |
+
+Your side and their side are sent separately, so speaker labels still come
+from the wiring; stretches of silence aren't sent at all. Recordings are
+uploaded in pieces of up to 10 minutes (FLAC, half the size of WAV). If a
+service fails, Scribe falls back to the built-in model and says so in the
+log. Ollama can't transcribe audio: it runs chat models, which is why it's
+an option for AI notes but not here. **Test** sends one second of audio to
+check the key and address.
+
 Playback is at a normal volume. The player gets a listening copy of each
 recording: both sides mixed into both ears, each brought to a normal speech
 level. The recording itself is untouched; transcription and **Download**
@@ -370,6 +399,15 @@ Marked `UNVERIFIED` in the source, in honesty rather than confidence:
 Scribe records conversations without notifying participants — that's the
 point of bot-free capture, and it's also a legal question that varies by
 jurisdiction. Recording-consent laws are on you, not the tool.
+
+## Version
+
+Settings → About shows the version (also in `scribe.log` at startup,
+`scribe-cli doctor` and `scribe-cli --version`). Each release on the
+Releases page is numbered `1.0.N`; test builds from pull requests say
+`1.0.N-test`, and running from source says `dev`.
+
+Made by VanDevs.
 
 ## License
 
