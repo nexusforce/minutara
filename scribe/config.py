@@ -84,6 +84,34 @@ AI_DEFAULTS: dict = {
     },
 }
 
+# --- Transcription service -------------------------------------------------------
+# provider "local" is the built-in Whisper model: nothing leaves the machine.
+# groq / openai send recordings to that service; "server" is a transcription
+# server you run yourself (Speaches, whisper.cpp…) with an OpenAI-style API.
+STT_DEFAULTS: dict = {
+    "provider": "local",        # local | groq | openai | server
+    "language": "en",           # "" lets the service detect it
+    "live_threads": 2,          # processor cores live transcription may use (built-in model)
+    "live_chunk_s": 30,         # how much audio it gathers before transcribing a piece
+    "providers": {
+        "groq": {
+            "api_key": "", "base_url": "https://api.groq.com/openai/v1",
+            "path": "/audio/transcriptions", "model": "whisper-large-v3-turbo",
+            "upload_format": "flac", "timeout": 300,
+        },
+        "openai": {
+            "api_key": "", "base_url": "https://api.openai.com/v1",
+            "path": "/audio/transcriptions", "model": "whisper-1",
+            "upload_format": "flac", "timeout": 300,
+        },
+        "server": {
+            "api_key": "", "base_url": "http://localhost:8000/v1",
+            "path": "/audio/transcriptions", "model": "Systran/faster-whisper-small.en",
+            "upload_format": "wav", "timeout": 900,
+        },
+    },
+}
+
 # --- Granola import ----------------------------------------------------------
 GRANOLA_DEFAULTS: dict = {
     "method": "mcp",            # mcp (sign in with Granola) | api (Personal API key)
@@ -120,6 +148,7 @@ class Config:
     mic_device: str = ""               # substring of a mic name; "" = system default
     speaker_device: str = ""           # output to capture "their" side from; "" = Windows default
     auto_transcribe: bool = True       # transcribe automatically when a recording stops
+    live_transcribe: bool = False      # transcribe during the meeting, so it's ready when you stop
 
     # --- Meeting detection and the floating recorder ---
     meeting_detect: bool = True        # pop up "Meeting detected" when a meeting app takes the mic
@@ -146,6 +175,7 @@ class Config:
     # --- Nested sections ---
     ai: dict = field(default_factory=lambda: copy.deepcopy(AI_DEFAULTS))
     granola: dict = field(default_factory=lambda: copy.deepcopy(GRANOLA_DEFAULTS))
+    stt: dict = field(default_factory=lambda: copy.deepcopy(STT_DEFAULTS))
 
     # --- Paths (all under APP_ROOT so the stick stays self-contained) ---
     # recordings_dir is user-configurable (Settings in the GUI, or
@@ -177,7 +207,7 @@ FLAT_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "pocket_base_url", "whisper_model", "whisper_device",
     "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
-    "meeting_detect", "meeting_apps", "meeting_titles", "meeting_browsers", "floating_recorder", "widget_pos",
+    "live_transcribe", "meeting_detect", "meeting_apps", "meeting_titles", "meeting_browsers", "floating_recorder", "widget_pos",
     "auto_export", "export_format",
     "usb_volume_label", "usb_record_dir",
     "delete_from_device", "server_port", "server_token",
@@ -284,6 +314,7 @@ def load() -> Config:
 
     cfg.ai = merge(AI_DEFAULTS, file_data.get("ai"))
     cfg.granola = merge(GRANOLA_DEFAULTS, file_data.get("granola"))
+    cfg.stt = merge(STT_DEFAULTS, file_data.get("stt"))
 
     if "recordings_dir" in file_data:
         cfg.recordings_dir = resolve_dir(file_data["recordings_dir"])
@@ -317,6 +348,7 @@ def save(cfg: Config) -> None:
     data["export_dir"] = str(cfg.export_dir)
     data["ai"] = cfg.ai
     data["granola"] = cfg.granola
+    data["stt"] = cfg.stt
     tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     os.replace(tmp, CONFIG_PATH)  # a crash mid-save never leaves half a config

@@ -227,8 +227,13 @@ async function poll() {
   document.body.classList.toggle("working",
     (!!t.busy || !!sm.busy || importing) && !LIVE.includes(s.state));
   const cloud = $("#cloud-state");
-  const sends = s.push_to_pocket || (S.ai.enabled && !S.ai.local);
-  cloud.textContent = S.ai.enabled ? `AI: ${S.ai.label}` : s.push_to_pocket ? "Pocket cloud on" : "Local only";
+  const stt = s.stt || {};
+  const sends = s.push_to_pocket || (S.ai.enabled && !S.ai.local) || stt.provider && stt.provider !== "local";
+  cloud.textContent = S.ai.enabled ? `AI: ${S.ai.label}`
+    : stt.provider && stt.provider !== "local" ? `Transcripts: ${stt.label}`
+    : s.push_to_pocket ? "Pocket cloud on" : "Local only";
+  cloud.title = [S.ai.enabled && `AI: ${S.ai.label}`, stt.label && `Transcripts: ${stt.label}`,
+    s.version && `Scribe ${s.version}`].filter(Boolean).join("\n");
   cloud.classList.toggle("cloud", !!sends);
   $$(".askbox").forEach(f => { f.hidden = !S.ai.enabled; });
   renderNow();
@@ -236,7 +241,7 @@ async function poll() {
   if (S.route.view === "note") renderDock();
 
   // Something changed (a recording saved, a transcript finished): refresh.
-  const sig = [s.state, s.note_id, t.name, t.queued, t.message, s.message,
+  const sig = [s.state, s.note_id, t.name, t.queued, t.message, s.message, (s.live || {}).lines,
                sm.id, sm.queued, sm.message, gr.state, Math.floor((gr.done || 0) / 10)].join("|");
   if (sig !== S.lastSig) {
     const first = !S.lastSig;
@@ -688,11 +693,22 @@ $$(".seg [data-tab]").forEach(b => { b.onclick = () => setTab(b.dataset.tab); })
 const LINE = /^(?:\[(\d+):(\d{2})\]\s+)?([^:\[\]]{1,60}):\s?(.*)$/;
 function renderTranscript(n) {
   const box = $("#n-transcript");
+  if (!n.has_transcript && n.live_transcript) {
+    const key = `live:${n.id}:${n.live_transcript.length}`;
+    if (box.dataset.for === key) return;
+    box.dataset.for = key;
+    const head = n.status === "transcribing" ? "Finishing the transcript…"
+      : "Live transcript. It's written a few moments behind, and finished when you stop.";
+    box.innerHTML = `<div class="t-live">${esc(head)}</div>` + conversation(n, n.live_transcript);
+    return;
+  }
   if (!n.has_transcript) {
     box.dataset.for = "";
     let msg, btn = "";
-    if (LIVE.includes(n.status)) msg = "The transcript appears here after you stop recording.";
-    else if (n.status === "transcribing") msg = "Transcribing now…";
+    if (LIVE.includes(n.status)) msg = n.live
+      ? "Transcribing as you go. The first lines appear here about half a minute in."
+      : "The transcript appears here after you stop recording.";
+    else if (n.status === "transcribing") msg = n.live ? "Finishing the transcript…" : "Transcribing now…";
     else if (n.status === "queued") msg = "Queued. It starts when the current transcription finishes.";
     else if (n.has_audio) {
       msg = n.error || "This recording hasn't been transcribed yet.";
@@ -710,9 +726,14 @@ function renderTranscript(n) {
       ${n.has_audio ? `<button class="btn" data-act="transcribe">Transcribe again</button>` : ""}</div>`;
     return;
   }
+  box.innerHTML = conversation(n, n.transcript);
+}
+
+// Transcript text drawn as a chat: you on the right, them on the left.
+function conversation(n, text) {
   const me = (n.me_label || "Me").toLowerCase();
   let out = "", prev = "";
-  for (const raw of n.transcript.split("\n")) {
+  for (const raw of text.split("\n")) {
     if (!raw.trim()) continue;
     const m = raw.match(LINE);
     if (!m) { out += `<div class="t-line">${esc(raw)}</div>`; prev = ""; continue; }
@@ -725,7 +746,7 @@ function renderTranscript(n) {
     out += `<div class="t-msg ${who.toLowerCase() === me ? "me" : "them"}">${head}` +
       `<div class="t-bubble">${ts}${esc(m[4])}</div></div>`;
   }
-  box.innerHTML = out;
+  return out;
 }
 
 async function transcribeNote() {
@@ -934,7 +955,10 @@ async function loadSettings() {
   $("#s-theme").value = themePref();
   if (!S.aiDefaults) { try { S.aiDefaults = await getJSON("/api/ai/defaults"); } catch {} }
   renderAI();
+  renderSTT();
   renderGranola();
+  $("#s-version").textContent = c.version === "dev" ? "dev (from source)" : c.version || "";
+  $("#s-credit-version").textContent = c.version && c.version !== "dev" ? c.version : "";
   loadDevices(c.mic_device, c.speaker_device);
   fillExportFolders();
   pollSettings();
@@ -1105,6 +1129,94 @@ function showAIResult(text, kind) {
   el.textContent = text;
 }
 
+// Transcription: the built-in model, a cloud service, or your own server.
+const STT_FIELDS = {
+  groq: {
+    main: [
+      ["api_key", "API key", "key", "From console.groq.com → API Keys."],
+      ["model", "Model", "text", "whisper-large-v3-turbo is fast and costs a few cents an hour. whisper-large-v3 is a little more accurate."],
+    ],
+  },
+  openai: {
+    main: [
+      ["api_key", "API key", "key", "From platform.openai.com → API keys."],
+      ["model", "Model", "text", "whisper-1 gives timestamps. Newer models (gpt-4o-transcribe) give text only; Scribe estimates the times."],
+    ],
+  },
+  server: {
+    main: [
+      ["base_url", "Server address", "text",
+        "A transcription server you run, e.g. Speaches (http://localhost:8000/v1) or whisper.cpp's server (http://127.0.0.1:8080, path /inference). It can be another computer with a graphics card."],
+      ["model", "Model", "text", "The model name your server expects."],
+      ["api_key", "API key", "key", "Leave blank if the server doesn't need one."],
+    ],
+  },
+};
+const STT_ADV = [
+  ["base_url", "API address", "text"],
+  ["path", "Transcription path", "text", "Added to the address. /audio/transcriptions for OpenAI-style servers."],
+  ["upload_format", "Upload as", ["flac", "wav"], "FLAC is half the size. Some servers only read WAV."],
+  ["timeout", "Timeout (seconds)", "number"],
+];
+const STT_WHERE = {
+  local: "Runs on this computer. Nothing leaves it.",
+  groq: "Recordings are sent to Groq to be transcribed.",
+  openai: "Recordings are sent to OpenAI to be transcribed.",
+  server: "Recordings are sent to the server you set below.",
+};
+
+function sttControl(p, [key, label, type, hint], value, envKey) {
+  const attrs = `data-sttp="${key}" data-p="${p}" aria-label="${esc(label)}"`;
+  let ctl;
+  if (type === "key") {
+    const ph = value ? "Saved. Type to replace it" : envKey ? "Using the key from your environment" : "Paste your key";
+    ctl = `<div class="btns"><input class="field wide" type="password" ${attrs} autocomplete="off" spellcheck="false" placeholder="${ph}">` +
+      (value ? `<button class="btn ghost sm" data-stt-clear="${p}">Remove</button>` : "") + `</div>`;
+  } else if (Array.isArray(type)) {
+    const opts = type.includes(value) ? type : [...type, value];
+    ctl = `<select class="sel" ${attrs}>${opts.map(o =>
+      `<option value="${esc(o)}"${o === value ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  } else {
+    ctl = `<input class="field ${type === "number" ? "num" : "wide"}" type="${type === "number" ? "number" : "text"}" ` +
+      `${attrs} value="${esc(value)}" spellcheck="false">`;
+  }
+  return `<div class="srow"><div class="stext"><b>${esc(label)}</b>${hint ? `<small>${esc(hint)}</small>` : ""}</div>${ctl}</div>`;
+}
+
+function renderSTT() {
+  const c = S.config, st = c.stt || { provider: "local", providers: {} }, p = st.provider;
+  $("#stt-provider").value = p;
+  $("#stt-where").textContent = STT_WHERE[p] || "";
+  $("#stt-where").classList.toggle("warn", p !== "local");
+  $$("[data-stt-local]").forEach(el => { el.hidden = p !== "local"; });
+  $$("[data-stt]").forEach(el => { el.value = st[el.dataset.stt] ?? ""; });
+  const hint = !c.auto_transcribe
+    ? "Needs “Transcribe automatically” (General) to be on."
+    : p === "local"
+      ? `The transcript is ready seconds after you stop, instead of minutes. Uses up to ${st.live_threads || 2} processor cores during meetings, so the call keeps priority; turn it off on an older laptop or to save battery.`
+      : `The transcript is ready seconds after you stop. Each part of the meeting is sent to ${p === "server" ? "your server" : $("#stt-provider").selectedOptions[0].textContent.replace(/ \(.*/, "")} as it's recorded.`;
+  $("#live-hint").textContent = hint;
+  const box = $("#stt-fields");
+  if (!STT_FIELDS[p]) { box.innerHTML = ""; return; }
+  const pc = st.providers[p] || {};
+  const value = k => (k === "api_key" ? pc.api_key_set : pc[k] ?? "");
+  const env = (c.stt_env_keys || {})[p];
+  const adv = STT_ADV.filter(f => !(p === "server" && f[0] === "base_url"));
+  box.innerHTML = STT_FIELDS[p].main.map(f => sttControl(p, f, value(f[0]), env)).join("") +
+    `<div class="srow"><div class="stext"><b>Check the connection</b><small>Sends one second of audio.</small></div>` +
+    `<button class="btn" data-stt-test="${p}">Test</button></div>` +
+    `<div class="ai-result" id="stt-result" hidden></div>` +
+    `<details class="adv"><summary>Advanced (address &amp; limits)</summary>` +
+    adv.map(f => sttControl(p, f, value(f[0]), env)).join("") + `</details>`;
+}
+function showSTTResult(text, kind) {
+  const el = $("#stt-result");
+  if (!el) return;
+  el.hidden = false;
+  el.className = `ai-result ${kind || ""}`;
+  el.textContent = text;
+}
+
 // Granola import settings and progress.
 function renderGranola() {
   const g = S.config.granola;
@@ -1234,6 +1346,22 @@ $("#view-settings").addEventListener("click", async e => {
     showAIResult(r.message || (r.ok ? "Connected." : "The test failed."), r.ok ? "ok" : "err");
     return;
   }
+  const sttTest = e.target.closest("[data-stt-test]");
+  if (sttTest) {
+    sttTest.disabled = true; sttTest.textContent = "Testing…";
+    showSTTResult("Sending a second of audio…", "");
+    const r = await send("POST", "/api/stt/test", { provider: sttTest.dataset.sttTest });
+    sttTest.disabled = false; sttTest.textContent = "Test";
+    showSTTResult(r.message || (r.ok ? "Connected." : "The test failed."), r.ok ? "ok" : "err");
+    return;
+  }
+  const sttClear = e.target.closest("[data-stt-clear]");
+  if (sttClear) {
+    if (!confirm("Remove the saved API key?")) return;
+    await saveConfig({ stt: { providers: { [sttClear.dataset.sttClear]: { api_key: null } } } }, "Key removed");
+    await reloadConfig(); renderSTT(); poll();
+    return;
+  }
   const clearBtn = e.target.closest("[data-ai-clear]");
   if (clearBtn) {
     if (!confirm("Remove the saved API key?")) return;
@@ -1309,6 +1437,30 @@ async function loadDevices(selected, speaker) {
 
 $("#view-settings").addEventListener("change", async e => {
   if (!S.config) return;
+  if (e.target.id === "stt-provider") {
+    const p = e.target.value;
+    if (await saveConfig({ stt: { provider: p } }, p === "local" ? "Transcribing on this computer" : "Transcription service saved")) {
+      await reloadConfig(); renderSTT(); poll();
+    }
+    return;
+  }
+  const sttp = e.target.closest("[data-sttp]");
+  if (sttp) {
+    const k = sttp.dataset.sttp;
+    const v = sttp.type === "number" ? Number(sttp.value) : sttp.value.trim();
+    if (k === "api_key" && !v) return;
+    if (await saveConfig({ stt: { providers: { [sttp.dataset.p]: { [k]: v } } } })) {
+      await reloadConfig(); renderSTT(); poll();
+    }
+    return;
+  }
+  const sttk = e.target.closest("[data-stt]");
+  if (sttk) {
+    const k = sttk.dataset.stt;
+    const v = sttk.type === "number" ? Number(sttk.value) : sttk.value.trim();
+    if (await saveConfig({ stt: { [k]: v } })) { await reloadConfig(); renderSTT(); }
+    return;
+  }
   if (e.target.id === "ai-provider") {
     const p = e.target.value;
     if (await saveConfig({ ai: { provider: p } }, p === "off" ? "AI turned off" : "AI provider saved")) {
@@ -1356,6 +1508,7 @@ $("#view-settings").addEventListener("change", async e => {
   S.config[k] = v;
   if (k === "pocket_api_key") { el.value = ""; el.placeholder = "Saved. Type to replace it"; }
   if (k === "recordings_dir") { await loadSettings(); refreshSoon(); }
+  if (k === "live_transcribe" || k === "auto_transcribe") renderSTT();
   poll();
 });
 

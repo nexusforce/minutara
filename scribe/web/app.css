@@ -391,6 +391,9 @@ body[data-rec="paused"] .bars i, body[data-rec="saving"] .bars i { animation: no
 .field.area::placeholder { color: var(--faint); }
 .field.num { min-width: 0; width: 84px; }
 .btns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.t-live { font-size: 12px; color: var(--dim); margin: 0 0 14px; }
+.version { font: 600 13px var(--mono); color: var(--dim); white-space: nowrap; }
+.credit { margin: 28px 0 8px; text-align: center; font-size: 12px; color: var(--faint); letter-spacing: .02em; }
 .part-tools { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 8px; }
 .part-tools[hidden] { display: none; }
 .export-opts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 13px; }

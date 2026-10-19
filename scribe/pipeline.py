@@ -32,6 +32,7 @@ def process(
     title: str | None = None,
     duration_s: float | None = None,
     recorded_at: datetime | None = None,
+    live=None,
 ) -> Path:
     """
     Transcribe audio and write a .txt next to the other transcripts.
@@ -57,13 +58,30 @@ def process(
             print(f"Pocket transcription failed ({e}). Falling back to local Whisper.")
 
     if not text:
-        utterances = transcribe(
-            audio_path,
-            me=cfg.me_label,
-            them=cfg.them_label,
-            model_size=cfg.whisper_model,
-            device=cfg.whisper_device,
-        )
+        from . import stt
+
+        utterances = None
+        if live is not None:
+            # Most of it was transcribed during the meeting; finish the rest.
+            try:
+                utterances = live.finish(audio_path)
+            except Exception as e:
+                log.warning("couldn't finish the live transcript (%s); transcribing the "
+                            "whole recording instead", e)
+        if utterances is None and stt.provider(cfg) != "local":
+            try:
+                utterances = stt.transcribe_file(cfg, audio_path, cfg.me_label, cfg.them_label)
+            except Exception as e:
+                log.warning("%s couldn't transcribe %s (%s); using the built-in model instead",
+                            stt.PROVIDERS[stt.provider(cfg)], audio_path.name, e)
+        if utterances is None:
+            utterances = transcribe(
+                audio_path,
+                me=cfg.me_label,
+                them=cfg.them_label,
+                model_size=cfg.whisper_model,
+                device=cfg.whisper_device,
+            )
         text = to_text(utterances)
 
     out = cfg.transcripts_dir / f"{name}.txt"

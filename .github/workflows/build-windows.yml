@@ -30,6 +30,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller pillow
 
+      - name: Stamp the version
+        run: |
+          # Releases (pushes to main) are 1.0.<run>; other builds say so.
+          $v = "1.0.${{ github.run_number }}"
+          if ("${{ github.event_name }}" -ne "push" -or "${{ github.ref }}" -ne "refs/heads/main") { $v = "$v-test" }
+          Set-Content -Path scribe\version.py -Value "VERSION = `"$v`"" -Encoding utf8
+          Write-Host "version $v"
+          "SCRIBE_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build Scribe.exe
         run: |
           python build\make_icon.py
@@ -76,6 +85,7 @@ jobs:
           $token = (Get-Content config.json | ConvertFrom-Json).server_token
           $status = Invoke-RestMethod "http://127.0.0.1:8790/api/status?token=$token"
           if ($status.state -ne "idle") { throw "unexpected state: $($status.state)" }
+          if ($status.version -ne $env:SCRIBE_VERSION) { throw "app reports version '$($status.version)', expected '$env:SCRIBE_VERSION'" }
           $page = Invoke-WebRequest "http://127.0.0.1:8790/" -UseBasicParsing
           if ($page.Content -notmatch "/static/app.js") { throw "app page missing" }
           $devices = Invoke-RestMethod "http://127.0.0.1:8790/api/devices?token=$token"

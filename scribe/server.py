@@ -27,10 +27,11 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import ai, export, granola, notes
+from . import ai, export, granola, notes, stt
 from . import config as config_mod
-from .config import AI_DEFAULTS, APP_ROOT, GRANOLA_DEFAULTS, Config
+from .config import AI_DEFAULTS, APP_ROOT, GRANOLA_DEFAULTS, STT_DEFAULTS, Config
 from .log import LOG_PATH, get
+from .version import VERSION
 from .meetings import MeetingWatcher
 from .pipeline import process
 from .widget import WidgetController
@@ -57,32 +58,35 @@ class Transcriber:
         self.current_title = ""
         self.last_message = ""
         self.after = None   # called with the note id after each successful transcript
+        self.current_live = None   # the live transcript being finished, if any
         threading.Thread(target=self._work, daemon=True).start()
 
     def enqueue(self, path: Path, title: str | None = None,
                 duration_s: float | None = None,
-                recorded_at: datetime | None = None) -> bool:
-        """Queue a file. False if it's already queued or being transcribed."""
+                recorded_at: datetime | None = None, live=None) -> bool:
+        """Queue a file. False if it's already queued or being transcribed.
+        live: a LiveTranscriber that already did most of the work."""
         path = Path(path)
         with self.lock:
             if path.name == self.current or path.name in self.pending:
                 return False
             self.pending.append(path.name)
         log.info("queued for transcription: %s", path.name)
-        self.q.put((path, title, duration_s, recorded_at))
+        self.q.put((path, title, duration_s, recorded_at, live))
         return True
 
     def _work(self) -> None:
         while True:
-            path, title, duration_s, recorded_at = self.q.get()
+            path, title, duration_s, recorded_at, live = self.q.get()
             with self.lock:
                 if path.name in self.pending:
                     self.pending.remove(path.name)
                 self.current = path.name
                 self.current_title = title or path.stem
+                self.current_live = live
             try:
                 process(path, self.cfg, title=title or path.stem,
-                        duration_s=duration_s, recorded_at=recorded_at)
+                        duration_s=duration_s, recorded_at=recorded_at, live=live)
                 notes.update(self.cfg, path.stem, error="")
                 export.schedule(self.cfg, path.stem)
                 self.last_message = f"Transcribed {self.current_title}"
@@ -96,11 +100,13 @@ class Transcriber:
                 with self.lock:
                     self.current = ""
                     self.current_title = ""
+                    self.current_live = None
 
     def status(self) -> dict:
         with self.lock:
             return {
                 "busy": bool(self.current),
+                "live": self.current_live is not None,
                 "name": self.current,
                 "title": self.current_title,
                 "queued": len(self.pending),
@@ -205,6 +211,7 @@ class Recorder:
         self.state = "idle"  # idle | recording | paused | saving | error
         self.last_message = ""
         self.meeting_app = ""  # the meeting app this recording was started for, if any
+        self.live = None       # LiveTranscriber while transcribing during the meeting
 
     def _elapsed(self, now: float) -> float:
         if not self.started_at:
@@ -275,10 +282,12 @@ class Recorder:
 
         note_id = self.note_id
         wav = self.cfg.recordings_dir / f"{note_id}.wav"
+        live = self._start_live(wav)
         try:
             result = record(wav, self.stop_event, mic_name=self.cfg.mic_device,
                             speaker_name=self.cfg.speaker_device,
-                            pause_event=self.pause_event)
+                            pause_event=self.pause_event,
+                            before_merge=live.halt if live else None)
             # The audio is safe on disk from here on, whatever happens next.
             notes.update(self.cfg, note_id, duration_s=round(result.duration_s, 1),
                          error="")
@@ -289,20 +298,46 @@ class Recorder:
                     wav, title=title,
                     duration_s=result.duration_s,
                     recorded_at=datetime.fromtimestamp(result.started_at, tz=timezone.utc),
+                    live=live,
                 )
                 self.last_message = f"Saved “{title}”. Transcribing."
             else:
                 self.last_message = f"Saved “{title}”."
+            self.live = None
             self.state = "idle"
         except Exception as e:
+            if live:
+                live.cancel()
+            self.live = None
             log.exception("recording session failed")
             notes.update(self.cfg, note_id, error=f"Recording failed: {e}")
             self.state = "error"
             self.last_message = str(e)
 
+    def _start_live(self, wav: Path):
+        """Transcribe during the meeting, if that's switched on (and anything
+        will transcribe this recording at all)."""
+        self.live = None
+        cfg = self.cfg
+        if not (cfg.live_transcribe and cfg.auto_transcribe):
+            return None
+        if cfg.prefer_pocket_transcripts and cfg.pocket_enabled:
+            return None
+        try:
+            from .stt import LiveTranscriber
+            live = LiveTranscriber(cfg, wav, cfg.me_label, cfg.them_label)
+            live.start()
+        except Exception as e:   # never stand in the way of recording
+            log.warning("live transcription unavailable: %s", e)
+            return None
+        self.live = live
+        return live
+
     def status(self) -> dict:
         now = datetime.now(timezone.utc).timestamp()
+        live = self.live
         return {
+            "live": live.status() if live and self.state in LIVE_STATES else None,
             "state": self.state,
             "note_id": self.note_id,
             "title": self.title,
@@ -332,6 +367,7 @@ EDITABLE_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "whisper_model", "whisper_device",
     "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
+    "live_transcribe",
     "meeting_detect", "meeting_apps", "meeting_titles", "meeting_browsers", "floating_recorder",
     "auto_export", "export_format",
     "delete_from_device", "pocket_base_url", "usb_volume_label", "usb_record_dir",
@@ -428,6 +464,9 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         s["meeting"] = watcher.snapshot()
         s["widget"] = widget.state()
         s["meeting_app"] = rec.meeting_app if rec.state in LIVE_STATES else ""
+        s["stt"] = {"provider": stt.provider(cfg), "label": stt.describe(cfg),
+                    "cloud": stt.provider(cfg) in stt.CLOUD}
+        s["version"] = VERSION
         return jsonify(s)
 
     @app.post("/api/start")
@@ -481,7 +520,14 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
                  has_summary=bool(n.get("summary")),
                  ai_status="writing" if s["id"] == n["id"]
                  else "queued" if n["id"] in s["pending"] else "")
+        lv = None
+        if n["id"] == rec.note_id and rec.state in LIVE_STATES:
+            lv = rec.live
+        elif d["status"] == "transcribing":
+            lv = trans.current_live
+        d["live"] = lv is not None
         if full:
+            d["live_transcript"] = lv.text() if lv is not None and not has_t else ""
             d["notes"] = n.get("notes") or ""
             d["transcript"] = (tpath.read_text(encoding="utf-8", errors="replace")
                                if has_t else "")
@@ -649,6 +695,19 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
         os.startfile(str(cfg.export_dir))   # noqa: S606 — opens Explorer on our own folder
         return jsonify({"ok": True})
 
+    @app.post("/api/stt/test")
+    def stt_test():
+        name = str((request.get_json(silent=True) or {}).get("provider") or "")
+        if name not in stt.PROVIDERS or name == "local":
+            return fail(400, "Pick a transcription service first.")
+        try:
+            return jsonify({"ok": True, "message": stt.check(cfg, name)})
+        except stt.STTError as e:
+            return fail(400, str(e))
+        except Exception as e:
+            log.exception("transcription test failed")
+            return fail(500, f"The test failed: {e}")
+
     @app.get("/api/folders")
     def list_folders():
         return jsonify({"folders": notes.folders(cfg)})
@@ -686,6 +745,10 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             "export_format": cfg.export_format,
             "export_dir": str(cfg.export_dir),
             "auto_transcribe": cfg.auto_transcribe,
+            "live_transcribe": cfg.live_transcribe,
+            "stt": config_mod.redacted(cfg.stt),
+            "stt_env_keys": {p: bool(stt.api_key(p, {})) for p in stt.ENV_KEYS},
+            "version": VERSION,
             "recordings_dir": str(cfg.recordings_dir),
             "use_pocket_api": cfg.use_pocket_api,
             "push_to_pocket": cfg.push_to_pocket,
@@ -732,14 +795,23 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             config_mod.apply_update(cfg.ai, AI_DEFAULTS, update)
             if cfg.ai.get("provider") not in ("off", *ai.PROVIDERS):
                 cfg.ai["provider"] = "off"
+        if isinstance(data.get("stt"), dict):
+            update = dict(data["stt"])
+            if "providers" in update:
+                given = update["providers"] if isinstance(update["providers"], dict) else {}
+                update["providers"] = {k: v for k, v in given.items()
+                                       if k in STT_DEFAULTS["providers"] and isinstance(v, dict)}
+            config_mod.apply_update(cfg.stt, STT_DEFAULTS, update)
+            if cfg.stt.get("provider") not in stt.PROVIDERS:
+                cfg.stt["provider"] = "local"
         if isinstance(data.get("granola"), dict):
             config_mod.apply_update(cfg.granola, GRANOLA_DEFAULTS, data["granola"])
             if cfg.granola.get("method") not in ("mcp", "api"):
                 cfg.granola["method"] = "mcp"
         config_mod.save(cfg)
-        log.info("settings saved (recordings_dir=%s, mic=%r, model=%s, auto=%s)",
-                 cfg.recordings_dir, cfg.mic_device, cfg.whisper_model,
-                 cfg.auto_transcribe)
+        log.info("settings saved (recordings_dir=%s, mic=%r, model=%s, auto=%s, live=%s, "
+                 "transcription=%s)", cfg.recordings_dir, cfg.mic_device, cfg.whisper_model,
+                 cfg.auto_transcribe, cfg.live_transcribe, stt.provider(cfg))
         return jsonify({"ok": True})
 
     @app.get("/api/devices")
@@ -1242,7 +1314,7 @@ def serve(cfg: Config, open_browser: bool = False) -> None:
         threading.Thread(target=export.save_all, args=(cfg,), daemon=True, name="export").start()
     lan_url = f"http://{local_ip()}:{cfg.server_port}/?token={cfg.server_token}"
 
-    log.info("serving on port %s (log: %s)", cfg.server_port, LOG_PATH)
+    log.info("Scribe %s serving on port %s (log: %s)", VERSION, cfg.server_port, LOG_PATH)
     print("\n  Scribe is up. On your phone (same Wi-Fi), open:\n")
     print(f"    {lan_url}\n")
     try:
