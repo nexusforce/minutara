@@ -1,8 +1,8 @@
-"""scribe-cli.exe — the same app for a terminal, e.g. `scribe-cli record --title "Sync"`."""
+"""minutara-cli.exe — the same app for a terminal, e.g. `minutara-cli record --title "Sync"`."""
 
 import sys
 
-from scribe.main import main
+from minutara.main import main
 
 if len(sys.argv) == 1:
     sys.argv.append("--help")

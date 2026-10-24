@@ -11,7 +11,7 @@ ingested.json
 granola_archive/
 webview_data/
 cache/
-scribe.log*
+minutara.log*
 
 # Portable build output
 dist/
@@ -27,8 +27,14 @@ Thumbs.db
 .DS_Store
 
 # Build intermediates
-build/scribe/
-build/scribe.ico
+build/minutara/
+build/minutara.ico
 
 # Auto-saved meeting documents (private)
 Meeting notes/
+
+# Test screenshots
+tests/shots/
+# Logs and icons from before the rename
+scribe.log*
+build/*.ico

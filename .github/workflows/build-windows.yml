@@ -1,5 +1,5 @@
-# Builds Scribe.exe on Windows, tests the packaged app, and (on main) publishes
-# Scribe-windows.zip as a GitHub Release. Pull requests get the zip as a
+# Builds Minutara.exe on Windows, tests the packaged app, and (on main) publishes
+# Minutara-windows.zip as a GitHub Release. Pull requests get the zip as a
 # downloadable build artifact instead.
 name: Build Windows app
 
@@ -13,7 +13,26 @@ permissions:
   contents: write   # publishing releases from main
 
 jobs:
+  # The test suites, with the audio hardware, Whisper and cloud services faked.
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy flask requests qrcode anthropic openai playwright
+          python -m playwright install --with-deps chromium
+      - name: Run the tests
+        run: python tests/run_all.py
+
   build:
+    needs: tests     # no release unless the tests pass
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -35,28 +54,28 @@ jobs:
           # Releases (pushes to main) are 1.0.<run>; other builds say so.
           $v = "1.0.${{ github.run_number }}"
           if ("${{ github.event_name }}" -ne "push" -or "${{ github.ref }}" -ne "refs/heads/main") { $v = "$v-test" }
-          Set-Content -Path scribe\version.py -Value "VERSION = `"$v`"" -Encoding utf8
+          Set-Content -Path minutara\version.py -Value "VERSION = `"$v`"" -Encoding utf8
           Write-Host "version $v"
-          "SCRIBE_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MINUTARA_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Build Scribe.exe
+      - name: Build Minutara.exe
         run: |
           python build\make_icon.py
-          python -m PyInstaller build\scribe.spec --noconfirm --clean
-          Copy-Item README.md, LICENSE -Destination dist\Scribe
-          Copy-Item build\exe.config dist\Scribe\Scribe.exe.config
-          Copy-Item build\exe.config dist\Scribe\scribe-cli.exe.config
+          python -m PyInstaller build\minutara.spec --noconfirm --clean
+          Copy-Item README.md, LICENSE -Destination dist\Minutara
+          Copy-Item build\exe.config dist\Minutara\Minutara.exe.config
+          Copy-Item build\exe.config dist\Minutara\minutara-cli.exe.config
 
       - name: Zip
-        run: 7z a -tzip -mx=5 Scribe-windows.zip .\dist\Scribe | Select-Object -Last 3
+        run: 7z a -tzip -mx=5 Minutara-windows.zip .\dist\Minutara | Select-Object -Last 3
 
       # Test the zip exactly as a user gets it: unzip, then run from there.
       - name: Test the packaged app
         env:
-          SCRIBE_WHISPER_MODEL: tiny.en
+          MINUTARA_WHISPER_MODEL: tiny.en
         run: |
-          7z x Scribe-windows.zip -osmoke | Select-Object -Last 2
-          Set-Location smoke\Scribe
+          7z x Minutara-windows.zip -osmoke | Select-Object -Last 2
+          Set-Location smoke\Minutara
 
           # Mark every file as downloaded from the internet, as Windows does
           # when a downloaded zip is extracted without "Unblock" first.
@@ -69,23 +88,23 @@ jobs:
           Get-ChildItem *.exe | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Stream Zone.Identifier }
 
           # For the record: with neither fix, does the mark break the window library?
-          Rename-Item Scribe.exe.config Scribe.exe.config.off
-          Rename-Item scribe-cli.exe.config scribe-cli.exe.config.off
-          $env:SCRIBE_NO_UNBLOCK = "1"
-          Write-Host "without the fixes: $(.\scribe-cli.exe doctor | Select-String 'app window')"
-          Remove-Item Env:SCRIBE_NO_UNBLOCK
-          Rename-Item Scribe.exe.config.off Scribe.exe.config
-          Rename-Item scribe-cli.exe.config.off scribe-cli.exe.config
+          Rename-Item Minutara.exe.config Minutara.exe.config.off
+          Rename-Item minutara-cli.exe.config minutara-cli.exe.config.off
+          $env:MINUTARA_NO_UNBLOCK = "1"
+          Write-Host "without the fixes: $(.\minutara-cli.exe doctor | Select-String 'app window')"
+          Remove-Item Env:MINUTARA_NO_UNBLOCK
+          Rename-Item Minutara.exe.config.off Minutara.exe.config
+          Rename-Item minutara-cli.exe.config.off minutara-cli.exe.config
 
-          .\scribe-cli.exe doctor --transcribe
+          .\minutara-cli.exe doctor --transcribe
           if ($LASTEXITCODE -ne 0) { throw "doctor reported a failure" }
 
-          $cli = Start-Process .\scribe-cli.exe -ArgumentList "serve", "--port", "8790" -PassThru -WindowStyle Hidden
+          $cli = Start-Process .\minutara-cli.exe -ArgumentList "serve", "--port", "8790" -PassThru -WindowStyle Hidden
           Start-Sleep -Seconds 20
           $token = (Get-Content config.json | ConvertFrom-Json).server_token
           $status = Invoke-RestMethod "http://127.0.0.1:8790/api/status?token=$token"
           if ($status.state -ne "idle") { throw "unexpected state: $($status.state)" }
-          if ($status.version -ne $env:SCRIBE_VERSION) { throw "app reports version '$($status.version)', expected '$env:SCRIBE_VERSION'" }
+          if ($status.version -ne $env:MINUTARA_VERSION) { throw "app reports version '$($status.version)', expected '$env:MINUTARA_VERSION'" }
           $page = Invoke-WebRequest "http://127.0.0.1:8790/" -UseBasicParsing
           if ($page.Content -notmatch "/static/app.js") { throw "app page missing" }
           $devices = Invoke-RestMethod "http://127.0.0.1:8790/api/devices?token=$token"
@@ -94,28 +113,28 @@ jobs:
           if ("$($zip.Headers['Content-Type'])" -notmatch "zip") { throw "Export all didn't return a zip: $($zip.Headers['Content-Type'])" }
           Stop-Process -Id $cli.Id -Force
 
-          # The windowless Scribe.exe must start too.
-          $app = Start-Process .\Scribe.exe -ArgumentList "serve", "--port", "8791" -PassThru
+          # The windowless Minutara.exe must start too.
+          $app = Start-Process .\Minutara.exe -ArgumentList "serve", "--port", "8791" -PassThru
           Start-Sleep -Seconds 20
           $status2 = Invoke-RestMethod "http://127.0.0.1:8791/api/status?token=$token"
-          if ($status2.state -ne "idle") { throw "Scribe.exe did not start" }
+          if ($status2.state -ne "idle") { throw "Minutara.exe did not start" }
           Stop-Process -Id $app.Id -Force
 
-          # Double-clicked (no arguments), Scribe.exe opens its own window,
-          # so the taskbar and a pinned icon show Scribe, not Edge.
+          # Double-clicked (no arguments), Minutara.exe opens its own window,
+          # so the taskbar and a pinned icon show Minutara, not Edge.
           $port = (Get-Content config.json | ConvertFrom-Json).server_port
-          $win = Start-Process .\Scribe.exe -PassThru
+          $win = Start-Process .\Minutara.exe -PassThru
           $title = ""
           $deadline = (Get-Date).AddSeconds(45)
-          while ((Get-Date) -lt $deadline -and $title -ne "Scribe") {
+          while ((Get-Date) -lt $deadline -and $title -ne "Minutara") {
             Start-Sleep -Seconds 2
             $win.Refresh()
             $title = $win.MainWindowTitle
           }
           Write-Host "window title: '$title'"
-          if ($title -ne "Scribe") { throw "Scribe.exe didn't open its own window" }
+          if ($title -ne "Minutara") { throw "Minutara.exe didn't open its own window" }
           # Opening it again hands over to the running app and exits.
-          $again = Start-Process .\Scribe.exe -PassThru
+          $again = Start-Process .\Minutara.exe -PassThru
           if (-not $again.WaitForExit(20000)) { throw "a second launch didn't hand over to the running app" }
           $shown = Invoke-RestMethod -Method Post "http://127.0.0.1:$port/api/show?token=$token"
           if (-not $shown.shown) { throw "the running window couldn't be brought to the front" }
@@ -165,7 +184,7 @@ jobs:
           Set-MicUse $edgeExe $false
           Wait-Meeting ""
           Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Get-Content scribe.log | Select-String "microphone in use|meeting detected|meeting ended" | Select-Object -Last 8
+          Get-Content minutara.log | Select-String "microphone in use|meeting detected|meeting ended" | Select-Object -Last 8
 
           # The floating recorder: show its recording face (Settings' preview)
           # and ask Windows whether the window is really on screen.
@@ -183,25 +202,25 @@ jobs:
             Start-Sleep -Milliseconds 500
             $fw = (Invoke-RestMethod "http://127.0.0.1:$port/api/status?token=$token").widget
             # ([NullString]::Value, not $null: PowerShell turns $null into "" for a string parameter)
-            $visible = [Win32]::IsWindowVisible([Win32]::FindWindow([NullString]::Value, "Scribe recorder"))
+            $visible = [Win32]::IsWindowVisible([Win32]::FindWindow([NullString]::Value, "Minutara recorder"))
           } while ((Get-Date) -lt $deadline -and -not ($visible -and $fw.page_mode -eq "recording"))
           Write-Host "floating recorder: visible=$visible $($fw | ConvertTo-Json -Compress -Depth 4)"
-          Get-Content scribe.log | Select-String "floating window" | Select-Object -Last 12
+          Get-Content minutara.log | Select-String "floating window" | Select-Object -Last 12
           if (-not $visible -or $fw.page_mode -ne "recording") { throw "the floating recorder didn't appear" }
 
-          # Closing the main window quits Scribe (the hidden floating window
+          # Closing the main window quits Minutara (the hidden floating window
           # mustn't keep it running).
           $win.CloseMainWindow() | Out-Null
-          if (-not $win.WaitForExit(45000)) { throw "closing the window didn't quit Scribe" }
+          if (-not $win.WaitForExit(45000)) { throw "closing the window didn't quit Minutara" }
 
-          Write-Host "--- scribe.log (tail)"
-          Get-Content scribe.log -Tail 25
+          Write-Host "--- minutara.log (tail)"
+          Get-Content minutara.log -Tail 25
 
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: Scribe-windows
-          path: Scribe-windows.zip
+          name: Minutara-windows
+          path: Minutara-windows.zip
           retention-days: 14
 
       - name: Publish release
@@ -210,5 +229,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = "1.0.${{ github.run_number }}"
-          gh release create "v$version" Scribe-windows.zip `
-            --title "Scribe $version" --notes-file build\release-notes.md --latest
+          gh release create "v$version" Minutara-windows.zip `
+            --title "Minutara $version" --notes-file build\release-notes.md --latest

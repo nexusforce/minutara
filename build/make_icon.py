@@ -1,4 +1,4 @@
-"""Draws build/scribe.ico — the amber lamp on a dark tile, like the app's favicon.
+"""Draws build/minutara.ico — the amber lamp on a dark tile, like the app's favicon.
 
 Generated at build time (needs Pillow) so the repo stays text-only.
 """
@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-OUT = Path(__file__).resolve().parent / "scribe.ico"
+OUT = Path(__file__).resolve().parent / "minutara.ico"
 SIZE = 256
 
 img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))

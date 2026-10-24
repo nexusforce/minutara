@@ -1,64 +1,72 @@
-# Scribe
+# Minutara
 
-Local-first meeting capture and transcription for Windows. A Granola
-replacement that runs on your own machine, treats a [Pocket](https://heypocket.com)
-device as a second input, and sends nothing to anyone's servers unless you
+**Private meeting notes for Windows.** Minutara records your Zoom, Teams and
+Meet calls, transcribes them on your own PC, and writes AI notes, with no bot
+joining the call and no subscription. Nothing leaves your computer unless you
 switch it on.
 
-```
-  Zoom/Teams on your PC ──► WASAPI loopback + mic ──┐
-                                                    ├─► local Whisper ─► transcripts/*.txt
-  Pocket device ──► USB-C (plain drive) ────────────┘
-                                                    ⋯► Pocket cloud (off by default)
+![Home: today's meetings](docs/screenshots/home-dark.png)
 
-  Phone ──► http://<laptop>:8765 ──► start / stop / read
-```
+- **No bot, no cloud by default.** It records what your speakers play and your
+  microphone, right on your PC. Nobody in the meeting is notified (so do tell
+  them; see [Consent](#consent)).
+- **Knows who said what.** Your microphone and the call audio are recorded on
+  separate channels, so the transcript says *Me* and *Them* from the wiring,
+  not from a model guessing.
+- **Fast, local transcription** with Whisper, optionally *while* the meeting
+  runs so the transcript is ready seconds after you stop. Or use Groq, OpenAI
+  or your own transcription server.
+- **AI notes and Ask**, Granola-style, with the provider you choose: Claude,
+  OpenAI, Gemini, any OpenAI-compatible server, or Ollama running locally.
+- **Spots your meetings.** When Zoom, Teams or Webex (app or browser) takes the
+  microphone, a small pop-up offers to start; while recording, a floating
+  recorder stays on top.
+- **Your data stays yours.** Plain files on your disk; export any meeting as
+  text or Markdown; keep a readable copy of every meeting in a folder; back
+  everything up to Google Drive, OneDrive or Dropbox.
+- **Bring your history.** Import your meetings from Granola, and recordings
+  from a Pocket device.
 
-## Why it exists
+| AI notes | Transcript | Floating recorder |
+|---|---|---|
+| ![AI notes](docs/screenshots/ai-notes-light.png) | ![Transcript](docs/screenshots/transcript-dark.png) | ![Meeting pop-up](docs/screenshots/recorder-prompt.png)<br>![Recorder](docs/screenshots/recorder-recording.png) |
 
-Meeting note-takers either charge a subscription (Granola, $14/mo), put a bot
-in your call, or route your conversations through their cloud. Scribe does
-none of that:
-
-- **Capture is local.** Windows WASAPI loopback records what your speakers
-  play; your mic is recorded separately. No bot joins, nobody is notified,
-  nothing leaves the machine.
-- **Transcription is local.** [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-  runs on your CPU (or GPU). The model lives in a folder next to the app.
-- **Speaker attribution is free.** Mic and loopback are kept as separate
-  channels of one stereo WAV — left is you, right is everyone else — and each
-  channel is transcribed independently. The you-vs-them split comes from the
-  wiring, not from a diarization model guessing.
-- **The Pocket is treated as a drive.** With USB Mode on, the device mounts
-  as a `POCKET` volume with a `RECORD` folder. Scribe copies new files off it
-  and transcribes them locally. In-person meetings and Zoom calls end up in
-  the same `transcripts/` folder.
-
-Transcripts are plain `.txt` — paste them into whatever LLM you like, or
-point your notes system at the folder.
+> Minutara is an independent open-source project. It isn't affiliated with,
+> endorsed by or connected to Granola, Zoom, Microsoft, Google or Pocket;
+> their names are used only to say what Minutara works with.
 
 ## Download the app (easiest)
 
-Grab **Scribe-windows.zip** from the [latest release](https://github.com/nexusforce/scribe/releases/latest),
+Grab **Minutara-windows.zip** from the [latest release](https://github.com/nexusforce/minutara/releases/latest),
 extract it somewhere permanent (or onto a USB stick) and double-click
-**Scribe.exe**. No Python needed. It's built automatically on every merge
+**Minutara.exe**. No Python needed. It's built automatically on every merge
 to `main`, and each build is tested on Windows before it's published.
 
 - The first time, Windows says "Windows protected your PC" (the app isn't
   code-signed): click **More info → Run anyway**. Unblocking the zip first
   (right-click → Properties → Unblock) avoids it.
-- Your settings, notes and recordings live next to Scribe.exe. To update,
-  extract a newer zip over the folder; your data stays.
-- `scribe-cli.exe` in the same folder is the command-line version
-  (`scribe-cli doctor` checks that every part Scribe needs works).
+- Your settings, notes and recordings live next to Minutara.exe, in plain
+  folders (`notes`, `transcripts`, `recordings`).
+
+**Updating (or going back a version).** Quit Minutara, delete `Minutara.exe`,
+`minutara-cli.exe` and the `_internal` folder, then extract the zip of the
+version you want into the folder that *contains* your Minutara folder. Your
+data folders and `config.json` aren't in the zip, so they're never touched.
+
+**Coming from "Scribe"** (this app's earlier name, up to 1.0.21): rename your
+`Scribe` folder to `Minutara`, delete `Scribe.exe`, `scribe-cli.exe` and
+`_internal` in it, then extract the new zip next to it as above. Everything
+carries over; re-pin the new Minutara.exe to the taskbar.
+- `minutara-cli.exe` in the same folder is the command-line version
+  (`minutara-cli doctor` checks that every part Minutara needs works).
 - It's an x64 app; ARM laptops run it through Windows' built-in emulation.
-- Scribe unblocks its own window files if Windows marked them as
+- Minutara unblocks its own window files if Windows marked them as
   downloaded; if it ever opens in an Edge window instead (no floating
-  recorder), Settings → Meetings says why, and so does `scribe-cli doctor`.
-- Scribe opens in its own window, drawn by WebView2 (the web engine built
-  into Windows 10/11), so the taskbar button and a pinned icon are Scribe's.
-  It isn't a website: the window talks only to Scribe running on your PC.
-  Closing the window quits Scribe; a recording in progress is stopped and
+  recorder), Settings → Meetings says why, and so does `minutara-cli doctor`.
+- Minutara opens in its own window, drawn by WebView2 (the web engine built
+  into Windows 10/11), so the taskbar button and a pinned icon are Minutara's.
+  It isn't a website: the window talks only to Minutara running on your PC.
+  Closing the window quits Minutara; a recording in progress is stopped and
   saved first, and a transcription under way finishes in the background.
 
 To build the .exe yourself: `powershell -ExecutionPolicy Bypass -File build\build_exe.ps1`.
@@ -66,25 +74,25 @@ To build the .exe yourself: `powershell -ExecutionPolicy Bypass -File build\buil
 ## Quick start (from a clone)
 
 ```powershell
-git clone https://github.com/nexusforce/scribe
-cd scribe
+git clone https://github.com/nexusforce/minutara
+cd minutara
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 copy config.example.json config.json
 ```
 
-Then **double-click `Scribe App.bat`** — the app opens in its own window.
-The engine runs windowless in the background and logs to `scribe.log`; quit
+Then **double-click `Minutara App.bat`** — the app opens in its own window.
+The engine runs windowless in the background and logs to `minutara.log`; quit
 it from Settings → Quit. If you want a visible console instead, run
-`scribe.bat serve --open`.
+`minutara.bat serve --open`.
 
 The same things are available as commands, if you prefer a terminal:
 
 ```powershell
-scribe.bat record --title "Board sync"    # capture a Zoom/Teams call, Ctrl+C to stop
-scribe.bat from-usb                       # pull new recordings off the Pocket
-scribe.bat serve                          # the GUI server (add --open to pop the window)
-scribe.bat config                         # show toggles and whether the drive is connected
+minutara.bat record --title "Board sync"    # capture a Zoom/Teams call, Ctrl+C to stop
+minutara.bat from-usb                       # pull new recordings off the Pocket
+minutara.bat serve                          # the GUI server (add --open to pop the window)
+minutara.bat config                         # show toggles and whether the drive is connected
 ```
 
 First transcription downloads the Whisper model (~500 MB for `small.en`).
@@ -97,7 +105,7 @@ emulation. See [Windows on ARM](#windows-on-arm-snapdragon-laptops) below.
 ## Portable build (run from a USB stick)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Scribe
+powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Minutara
 ```
 
 Run once on a machine with internet; the stick works offline afterward. It
@@ -125,7 +133,7 @@ transparently through the Prism emulator, so both install paths work:
   so it works as-is — even when run on the ARM machine itself:
 
   ```powershell
-  powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Scribe
+  powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Minutara
   ```
 
 Notes for ARM:
@@ -173,10 +181,10 @@ ready. You can start the next recording while the last one transcribes.
 names, the Pocket options and API key, plus **Link your phone**, the
 activity log and Quit.
 
-**Microphone** and **Speakers** (Settings → Recording) pick what Scribe
+**Microphone** and **Speakers** (Settings → Recording) pick what Minutara
 records: your side from the mic, their side from whichever output your
 sound comes out of (speakers, headphones, Bluetooth, a monitor). Left on
-default, Scribe follows Windows' default output.
+default, Minutara follows Windows' default output.
 
 **Test mic** and **Test speakers** record four seconds, play them back and
 say what they found: working, too quiet, silent (often Windows' microphone
@@ -186,26 +194,26 @@ playing. Use them before a real meeting, and after changing devices.
 
 **Meetings.** When Zoom, Teams or Webex starts using your microphone, a
 small pop-up appears ("Zoom meeting · Take notes? Start / Not now"), like
-Granola's. Scribe asks Windows which programs are recording from a
+Granola's. Minutara asks Windows which programs are recording from a
 microphone, two ways, every two seconds: Windows' audio system (the active
 recording sessions on every microphone, with the program behind each) and
 the privacy record behind the taskbar's mic icon. Nothing is listened to. Teams, Google Meet and Zoom in a web browser count too: the
 browser is using the mic and one of its windows is titled like a meeting
 ("… | Microsoft Teams", "Meet – …"). When the meeting app lets go of the mic
-while you're recording, the pop-up asks whether to stop. Scribe has to be
+while you're recording, the pop-up asks whether to stop. Minutara has to be
 open (it can be minimized). The app list and page titles are settings, and
 every mic change is logged ("microphone in use by: …") and shown live in
 Settings → Meetings, so a missed meeting is easy to diagnose.
 
 **Floating recorder.** While recording, a small always-on-top window with
-the timer, pause, stop and a button back to Scribe appears whenever
-Scribe's own window isn't in front. Drag it anywhere (it remembers where);
+the timer, pause, stop and a button back to Minutara appears whenever
+Minutara's own window isn't in front. Drag it anywhere (it remembers where);
 the – button tucks it away for the rest of that recording. Both are on by
 default and can be turned off in Settings → Meetings, which has a **Show
 me** preview for each.
 
 **Transcribe while recording** (Settings → Transcription, off by default).
-Instead of waiting until you press Stop, Scribe transcribes the meeting as it
+Instead of waiting until you press Stop, Minutara transcribes the meeting as it
 goes: about every 30 seconds it takes the newest audio from each side, cuts
 it at a pause so no word is split, and transcribes it, passing along the
 last words so names stay consistent. The Transcript tab shows the transcript
@@ -216,19 +224,21 @@ falls behind, or anything goes wrong, the rest is simply transcribed after
 the meeting; the recording itself is never touched. **Transcribe again** on
 a note always re-runs the whole recording in one pass.
 
+![Settings: transcription](docs/screenshots/settings-transcription.png)
+
 **Transcription services** (Settings → Transcription → Transcribe with). The
 built-in model is the default and nothing leaves your PC. Optionally:
 
 | Service | Notes |
 |---|---|
 | Groq | Cloud, by far the fastest: an hour-long meeting in seconds, for a few cents (`whisper-large-v3-turbo`). Key from console.groq.com, or `GROQ_API_KEY` |
-| OpenAI | Cloud. `whisper-1` gives timestamps; newer models give text only and Scribe estimates the times. `OPENAI_API_KEY` works too |
-| Your own server | Anything with OpenAI's transcription API: [Speaches](https://github.com/speaches-ai/speaches) (`http://localhost:8000/v1`) or whisper.cpp's server (`http://127.0.0.1:8080`, path `/inference`). Run it on a PC with a graphics card and point every Scribe at it |
+| OpenAI | Cloud. `whisper-1` gives timestamps; newer models give text only and Minutara estimates the times. `OPENAI_API_KEY` works too |
+| Your own server | Anything with OpenAI's transcription API: [Speaches](https://github.com/speaches-ai/speaches) (`http://localhost:8000/v1`) or whisper.cpp's server (`http://127.0.0.1:8080`, path `/inference`). Run it on a PC with a graphics card and point every Minutara at it |
 
 Your side and their side are sent separately, so speaker labels still come
 from the wiring; stretches of silence aren't sent at all. Recordings are
 uploaded in pieces of up to 10 minutes (FLAC, half the size of WAV). If a
-service fails, Scribe falls back to the built-in model and says so in the
+service fails, Minutara falls back to the built-in model and says so in the
 log. Ollama can't transcribe audio: it runs chat models, which is why it's
 an option for AI notes but not here. **Test** sends one second of audio to
 check the key and address.
@@ -239,10 +249,10 @@ level. The recording itself is untouched; transcription and **Download**
 use the original, which keeps you and them on separate channels.
 
 Recordings follow the clock. Windows sends nothing from the speakers while
-nothing plays, and some drivers deliver audio too fast or too slow; Scribe
+nothing plays, and some drivers deliver audio too fast or too slow; Minutara
 fills the gaps with silence and drops anything past real time, so a
 10-second recording is 10 seconds long. Each recording logs what every
-device actually did (`scribe.log`, lines starting `capture:`).
+device actually did (`minutara.log`, lines starting `capture:`).
 
 **Export.** Each tab has **Copy** and **Download** for that part: AI notes,
 My notes or the transcript. **… → Download everything** / **Copy
@@ -255,21 +265,35 @@ Notepad, Word or an email) or Markdown (`.md`, for Notion, Obsidian and
 similar), set under **File type**. Names start with the date, e.g.
 `2026-10-18 1410 Weekly sync.txt`, so they sort by date.
 
-**Meeting notes folder.** Scribe also keeps a readable copy of every
-meeting in `Meeting notes\` next to Scribe.exe, updated a few seconds after
+**Meeting notes folder.** Minutara also keeps a readable copy of every
+meeting in `Meeting notes\` next to Minutara.exe, updated a few seconds after
 its AI notes, your notes or its transcript change, and removed when you
 delete the meeting. Point it at any folder (OneDrive, a shared drive) under
 **Settings → Export**, or turn it off there. **Save all now** writes every
-existing meeting; **Open folder** opens it in Explorer. Scribe's own data
+existing meeting; **Open folder** opens it in Explorer. Minutara's own data
 stays where it was: notes and AI notes in `notes\` (one JSON file per
 meeting), transcripts in `transcripts\`, audio in `recordings\`.
 
+**Backup** (Settings → Backup, off by default). Choose a folder that Google
+Drive for desktop, OneDrive or Dropbox syncs (Minutara suggests the ones it
+finds, e.g. `G:\My Drive\Minutara backup`) and that app uploads it. Minutara
+keeps the copy current a few seconds after anything changes, and every 15
+minutes regardless: `notes\` (your notes, AI notes, titles, folders),
+`transcripts\`, `Meeting notes\` (a readable document per meeting, to open
+on your phone) and, if you turn on **Include recordings**, `recordings\`
+(about 230 MB per hour of meeting). `config.json` and your API keys are never
+copied. Deleting a meeting removes it from the backup too (cloud drives keep
+deleted files in their trash for a while); files you add to the folder
+yourself are left alone. **Restore** copies back whatever's missing on this PC
+and never overwrites, so on a new laptop: install Minutara, choose the same
+folder, press Restore.
+
 Files that were already in `recordings/` or `transcripts/` (from the CLI,
-the Pocket, or older versions of Scribe) show up as notes automatically.
+the Pocket, or older versions of Minutara) show up as notes automatically.
 Each note is a small JSON file in `notes/`; audio and transcripts stay where
 they always were.
 
-What Scribe deliberately doesn't copy from Granola: calendar sync, sharing
+What Minutara deliberately doesn't copy from Granola: calendar sync, sharing
 and billing.
 
 ## AI notes and Ask
@@ -299,7 +323,7 @@ meetings plus any that match the question, and links the ones it used.
 Meetings longer than a model can read at once (small local models,
 especially) are summarized in parts and then combined — never silently cut.
 Both prompts are editable under **Prompts**; leave them blank to keep
-Scribe's built-in ones.
+Minutara's built-in ones.
 
 Everything that talks to the outside world — addresses, model names, API
 style, output-limit parameter, timeouts, input budgets, Ollama's context
@@ -309,23 +333,23 @@ code change.
 
 ## Moving from Granola
 
-**Settings → Import from Granola** copies your history into Scribe so nothing
+**Settings → Import from Granola** copies your history into Minutara so nothing
 is lost when you cancel: titles, dates, attendees, folders, Granola's AI
 notes, your own typed notes and full transcripts (Granola keeps no audio, so
 there's none to copy).
 
 - **Sign in with Granola** (default) uses Granola's official MCP server: a
   browser window opens, you approve, and the import starts by itself. Works on
-  Granola's paid plans. Do this on the computer running Scribe.
+  Granola's paid plans. Do this on the computer running Minutara.
 - **Granola API key** uses Granola's Personal API (`grn_…` keys need a
   Business or Enterprise plan).
 
 Pick "Ones I recorded or attended" or "Everything I can see", and a start
 date. Running the import again only adds new meetings, so an interrupted
 import just continues; **Re-import** refreshes everything but keeps notes
-you've typed in Scribe. Meetings whose transcript Granola won't release are
+you've typed in Minutara. Meetings whose transcript Granola won't release are
 still imported, with the reason listed. Granola's raw responses are also kept
-in `granola_archive/`, so even fields Scribe doesn't show are preserved.
+in `granola_archive/`, so even fields Minutara doesn't show are preserved.
 
 ## Pocket
 
@@ -341,7 +365,7 @@ your Pocket account too; the API address is a setting as well.
 Settings → **Link your phone** (or the phone icon in the sidebar) shows a QR
 code. Scan it on the same Wi-Fi and add the page to your home screen: it's
 the same app, laid out for a phone. Double-clicking the launcher while
-Scribe is already running doesn't start a second copy — it just reopens the
+Minutara is already running doesn't start a second copy — it just reopens the
 window.
 
 - Phone and laptop must share a network. Corporate/guest Wi-Fi with client
@@ -379,7 +403,7 @@ Developer → API Keys) — organization keys are rejected by the upload endpoin
 | `transcribe <file>` | Transcribe any audio file you already have |
 | `serve [--port N] [--open]` | Start the app (and open its window with `--open`) |
 | `config` | Show current settings and device status |
-| `doctor [--transcribe]` | Check that every part Scribe needs works on this machine |
+| `doctor [--transcribe]` | Check that every part Minutara needs works on this machine |
 
 ## Known unknowns
 
@@ -394,20 +418,40 @@ Marked `UNVERIFIED` in the source, in honesty rather than confidence:
   trigger cloud sync of unsynced recordings. Test the loop with a throwaway
   recording before a real meeting.
 
+## Privacy: what leaves your computer
+
+Nothing, by default. Each of these sends data only once you switch it on:
+
+| Setting | What's sent, and where |
+|---|---|
+| Transcription service (Groq, OpenAI, your server) | Each side's audio, to that service |
+| AI notes & Ask (Claude, OpenAI, Gemini, compatible) | Transcripts and your notes, to that provider. Ollama runs locally |
+| Backup | Your meetings, to the folder you pick; your cloud drive's app uploads it |
+| Granola import | Your Granola sign-in, to Granola, to read your own meetings |
+| Pocket cloud | Recordings, to Pocket |
+
+The phone remote is served from your PC on your own network, behind a token.
+
 ## Consent
 
-Scribe records conversations without notifying participants — that's the
+Minutara records conversations without notifying participants — that's the
 point of bot-free capture, and it's also a legal question that varies by
 jurisdiction. Recording-consent laws are on you, not the tool.
 
 ## Version
 
-Settings → About shows the version (also in `scribe.log` at startup,
-`scribe-cli doctor` and `scribe-cli --version`). Each release on the
+Settings → About shows the version (also in `minutara.log` at startup,
+`minutara-cli doctor` and `minutara-cli --version`). Each release on the
 Releases page is numbered `1.0.N`; test builds from pull requests say
 `1.0.N-test`, and running from source says `dev`.
 
-Made by VanDevs.
+Minutara was called Scribe up to 1.0.21. Made by VanDevs.
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome; see
+[CONTRIBUTING.md](CONTRIBUTING.md). For anything security-related, please
+follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
 ## License
 
