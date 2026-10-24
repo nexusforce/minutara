@@ -25,7 +25,24 @@ def chromium() -> dict:
     return {"executable_path": path} if Path(path).exists() else {}
 
 
+def _keep_playwright_browsers() -> None:
+    """Minutara points XDG_CACHE_HOME at its own models folder; Playwright
+    looks for its browsers there too unless told where they really are."""
+    import os
+    import sys as _sys
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return
+    if _sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    elif _sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(base / "ms-playwright")
+
+
 def make_app_root(prefix="minutara-test-"):
+    _keep_playwright_browsers()
     tmp = Path(tempfile.mkdtemp(prefix=prefix))
     shutil.copytree(REPO / "minutara", tmp / "minutara")
     sys.path.insert(0, str(tmp))

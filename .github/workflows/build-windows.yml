@@ -26,7 +26,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy flask requests qrcode playwright
+          python -m pip install numpy flask requests qrcode anthropic openai playwright
           python -m playwright install --with-deps chromium
       - name: Run the tests
         run: python tests/run_all.py

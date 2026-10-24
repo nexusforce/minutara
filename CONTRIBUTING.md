@@ -35,7 +35,7 @@ fake Whisper model and fake cloud services, so they need no microphone, model
 download or API keys:
 
 ```bash
-pip install numpy flask requests qrcode playwright
+pip install numpy flask requests qrcode anthropic openai playwright
 python -m playwright install chromium     # for the browser tests
 python tests/run_all.py                   # or: --no-ui, or a name filter like: export
 ```
