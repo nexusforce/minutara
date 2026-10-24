@@ -1,12 +1,12 @@
-# make_portable.ps1 — build a self-contained Scribe on a USB stick.
+# make_portable.ps1 — build a self-contained Minutara on a USB stick.
 # Run ONCE on any Windows box with internet. After that the stick runs offline.
 #
-#   powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Scribe
+#   powershell -ExecutionPolicy Bypass -File build\make_portable.ps1 -Target E:\Minutara
 #
 # No admin rights needed. Nothing is installed on the host.
 
 param(
-  [string]$Target = "$PSScriptRoot\..\dist\Scribe",
+  [string]$Target = "$PSScriptRoot\..\dist\Minutara",
   [string]$PyVersion = "3.11.9",
   [string]$Model = "small.en"
 )
@@ -49,7 +49,7 @@ Write-Host "Installing dependencies (this is the slow part)..."
 
 # 4. App source
 Write-Host "Copying app..."
-Copy-Item "$PSScriptRoot\..\scribe" -Destination $Target -Recurse -Force
+Copy-Item "$PSScriptRoot\..\minutara" -Destination $Target -Recurse -Force
 Copy-Item "$PSScriptRoot\..\README.md" -Destination $Target -Force -ErrorAction SilentlyContinue
 
 # 5. Pre-download the Whisper model so the stick works with no internet.
@@ -70,8 +70,8 @@ cd /d "%~dp0"
 set HF_HOME=%~dp0models
 set XDG_CACHE_HOME=%~dp0models
 set PYTHONPATH=%~dp0lib;%~dp0
-"%~dp0python\python.exe" -m scribe.main %*
-"@ | Set-Content "$Target\scribe.bat" -Encoding ASCII
+"%~dp0python\python.exe" -m minutara.main %*
+"@ | Set-Content "$Target\minutara.bat" -Encoding ASCII
 
 @"
 @echo off
@@ -81,21 +81,21 @@ set "HF_HOME=%~dp0models"
 set "XDG_CACHE_HOME=%~dp0models"
 set "PYTHONPATH=%~dp0lib;%~dp0"
 if exist "%~dp0python\pythonw.exe" (
-  start "" "%~dp0python\pythonw.exe" -m scribe.main serve --open
+  start "" "%~dp0python\pythonw.exe" -m minutara.main serve --open
 ) else (
-  "%~dp0python\python.exe" -m scribe.main serve --open
+  "%~dp0python\python.exe" -m minutara.main serve --open
   if errorlevel 1 pause
 )
-"@ | Set-Content "$Target\Scribe App.bat" -Encoding ASCII
+"@ | Set-Content "$Target\Minutara App.bat" -Encoding ASCII
 
 @"
 @echo off
 cd /d "%~dp0"
-call scribe.bat record --title "%~1"
+call minutara.bat record --title "%~1"
 pause
 "@ | Set-Content "$Target\Record.bat" -Encoding ASCII
 
 $size = "{0:N1}" -f ((Get-ChildItem $Target -Recurse | Measure-Object Length -Sum).Sum / 1GB)
 Write-Host ""
 Write-Host "Done. $Target is $size GB." -ForegroundColor Green
-Write-Host "Copy that folder to the stick. Run scribe.bat config to check it." -ForegroundColor Green
+Write-Host "Copy that folder to the stick. Run minutara.bat config to check it." -ForegroundColor Green

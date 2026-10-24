@@ -1,0 +1,41 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Please remove anything private** before posting: meeting titles,
+        names, and never paste API keys, `config.json` or `granola_auth.json`.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Settings → About, or run `minutara-cli --version`
+      placeholder: "1.0.25"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `minutara-cli doctor`
+      description: Run it in the Minutara folder.
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The relevant lines of `minutara.log` (Settings → About → View log). Remove anything private.
+      render: text
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and PC
+      placeholder: "Windows 11 24H2, Intel laptop"
