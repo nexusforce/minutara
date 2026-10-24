@@ -47,7 +47,9 @@ def _sse(events):
 
 @app.post("/anthropic/v1/messages")
 def anthropic_messages():
-    if request.headers.get("x-api-key") != "sk-ant-good":
+    # SDK 1.x sends x-api-key; 2.x sends "Authorization: Bearer".
+    key = request.headers.get("x-api-key") or request.headers.get("Authorization", "").removeprefix("Bearer ")
+    if key != "sk-ant-good":
         return jsonify({"type": "error", "error": {"type": "authentication_error",
                                                    "message": "invalid x-api-key"}}), 401
     body = request.get_json()

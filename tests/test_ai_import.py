@@ -103,8 +103,10 @@ cfg.ai["provider"] = "anthropic"
 out = ai.complete(cfg, "Write meeting notes", msgs)
 call = last("/anthropic/v1/messages")
 check("claude: answer parsed from stream", out.startswith("# Budget"), out[:40])
-check("claude: x-api-key + anthropic-version headers",
-      call["headers"].get("x-api-key") == "sk-ant-good" and call["headers"].get("anthropic-version"))
+h = {k.lower(): v for k, v in call["headers"].items()}
+check("claude: key sent (x-api-key or Bearer, by SDK version) + anthropic-version",
+      (h.get("x-api-key") == "sk-ant-good" or h.get("authorization") == "Bearer sk-ant-good")
+      and h.get("anthropic-version"), str({k: v for k, v in h.items() if "key" in k or "auth" in k}))
 check("claude: default model is claude-opus-5-5", call["json"]["model"] == "claude-opus-5-5")
 check("claude: fallback beta + fallbacks=default",
       "server-side-fallback-2026-07-01" in call["headers"].get("anthropic-beta", "")
