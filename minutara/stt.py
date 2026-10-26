@@ -34,7 +34,7 @@ import numpy as np
 import requests
 
 from .log import get
-from .transcribe import WHISPER_RATE, Utterance, to_text
+from .transcribe import WHISPER_RATE, Utterance, Word, run_whisper, split_words, to_text, vocab_terms
 
 log = get("minutara.stt")
 
@@ -157,6 +157,7 @@ class LocalEngine:
 
     def __init__(self, cfg, threads: int = 0):
         self.size, self.device, self.threads = cfg.whisper_model, cfg.whisper_device, threads
+        self.vocabulary = getattr(cfg, "vocabulary", "")
         self._model = None
 
     def model(self):
@@ -169,12 +170,8 @@ class LocalEngine:
         return self._model
 
     def run(self, x: np.ndarray, offset: float, speaker: str, prompt: str = "") -> list[Utterance]:
-        segments, _info = self.model().transcribe(
-            x.astype(np.float32), beam_size=5, vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 500},
-            initial_prompt=prompt or None)
-        return [Utterance(offset + s.start, offset + s.end, speaker, s.text.strip())
-                for s in segments if s.text.strip()]
+        return run_whisper(self.model(), x.astype(np.float32), speaker, offset, prompt,
+                           self.vocabulary)
 
 
 class CloudEngine:
@@ -194,22 +191,38 @@ class CloudEngine:
             raise STTError(f"No address set for {self.label}. Add it in Settings → Transcription.")
         self.url = base + "/" + (self.pc.get("path") or "/audio/transcriptions").lstrip("/")
         self.language = (cfg.stt.get("language") or "").strip()
+        self.vocabulary = vocab_terms(getattr(cfg, "vocabulary", ""))
         self.verbose = True   # ask for timed segments; dropped if the model can't give them
+        self.words = True     # and word timings; dropped if the service won't
         self.seconds_sent = 0.0
 
     def run(self, x: np.ndarray, offset: float, speaker: str, prompt: str = "") -> list[Utterance]:
         data, fname, mime = _encode(x, self.pc.get("upload_format") or "flac")
-        body = self._post(data, fname, mime, prompt)
+        body = self._post(data, fname, mime, self._prompt(prompt))
         self.seconds_sent += len(x) / RATE
         out = []
+        all_words = body.get("words") or []
         for s in body.get("segments") or []:
             text = str(s.get("text") or "").strip()
-            if text:
-                out.append(Utterance(offset + float(s.get("start") or 0),
-                                     offset + float(s.get("end") or 0), speaker, text))
+            if not text:
+                continue
+            start, end = float(s.get("start") or 0), float(s.get("end") or 0)
+            timed = _timed_words(text, s.get("words") or
+                                 [w for w in all_words if start - 0.05 <= float(w.get("start", -1)) < end + 0.05])
+            if timed:
+                out += split_words(timed, speaker, offset)
+            else:
+                out.append(Utterance(offset + start, offset + end, speaker, text))
         if not out and not body.get("segments"):
             out = _spread(str(body.get("text") or "").strip(), offset, len(x) / RATE, speaker)
         return out
+
+    def _prompt(self, tail: str) -> str:
+        """Names and terms first (so they're spelled right), then the last
+        words said; kept under the services' ~224-token prompt limit."""
+        vocab = ", ".join(self.vocabulary)
+        prompt = (vocab + ". " if vocab else "") + (tail or "")
+        return prompt[:800].strip()
 
     def _post(self, data: bytes, fname: str, mime: str, prompt: str) -> dict:
         headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
@@ -218,6 +231,8 @@ class CloudEngine:
             fields = {"model": self.pc.get("model") or "",
                       "response_format": "verbose_json" if self.verbose else "json",
                       "temperature": "0"}
+            if self.verbose and self.words:
+                fields["timestamp_granularities[]"] = ["segment", "word"]
             if self.language:
                 fields["language"] = self.language
             if prompt:
@@ -231,6 +246,10 @@ class CloudEngine:
                                   else "Check your internet connection.")) from None
             except requests.Timeout:
                 raise STTError(f"{self.label} didn't answer within {timeout:.0f} seconds.") from None
+            if r.status_code == 400 and self.words and re.search(r"timestamp_granularit", r.text, re.I):
+                log.info("%s doesn't give word timings; using its segments", self.label)
+                self.words = False
+                continue
             if r.status_code == 400 and self.verbose and re.search(
                     r"response_format|verbose_json", r.text, re.I):
                 log.info("%s model %s gives no timings; using plain text", self.label,
@@ -254,6 +273,18 @@ class CloudEngine:
                 return {"text": r.text}
             return body if isinstance(body, dict) else {"text": str(body)}
         raise STTError(f"{self.label} kept refusing; try again later.")
+
+
+def _timed_words(text: str, words: list) -> list[Word] | None:
+    """Services give word timings without punctuation; put the segment's own
+    words (with punctuation) onto those timings when they line up one to one."""
+    tokens = text.split()
+    if not words or len(tokens) != len(words):
+        return None
+    try:
+        return [Word(float(w["start"]), float(w["end"]), " " + tok) for tok, w in zip(tokens, words)]
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _message(r: requests.Response) -> str:

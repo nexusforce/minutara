@@ -1,7 +1,7 @@
 pyaudiowpatch>=0.2.12; sys_platform == "win32"   # WASAPI loopback capture (Windows only)
 numpy>=1.24
 soundfile>=0.12
-faster-whisper>=1.0
+faster-whisper>=1.1          # hotwords + word timestamps
 requests>=2.31
 flask>=3.0              # phone remote
 qrcode>=7.4             # optional: QR for the remote URL

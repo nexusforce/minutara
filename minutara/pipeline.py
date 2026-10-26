@@ -38,7 +38,7 @@ def process(
     Transcribe audio and write a .txt next to the other transcripts.
     Pushes to Pocket only if config says so. Returns the transcript path.
     """
-    from .transcribe import to_text, transcribe
+    from .transcribe import tidy, to_text, transcribe
 
     title = title or audio_path.stem
     name = audio_path.stem
@@ -81,7 +81,9 @@ def process(
                 them=cfg.them_label,
                 model_size=cfg.whisper_model,
                 device=cfg.whisper_device,
+                vocabulary=cfg.vocabulary,
             )
+        utterances = tidy(utterances, cfg.me_label, cfg.them_label, echo=cfg.remove_echo)
         text = to_text(utterances)
 
     out = cfg.transcripts_dir / f"{name}.txt"

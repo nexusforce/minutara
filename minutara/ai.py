@@ -352,12 +352,26 @@ def _labels(cfg: Config) -> dict:
     return {"me": cfg.me_label or "Me", "them": cfg.them_label or "Them"}
 
 
+def _glossary(cfg: Config) -> str:
+    """Your names-and-terms list, so AI notes spell people and things right
+    even where the transcript misheard them."""
+    from .transcribe import vocab_terms
+    terms = vocab_terms(getattr(cfg, "vocabulary", ""))
+    if not terms:
+        return ""
+    return ("\n\nCorrect spellings of names and terms that come up in these meetings: "
+            + ", ".join(terms) + ". The transcript is machine-made and may mishear them "
+            "(for example a similar-sounding name); use these spellings where the context fits.")
+
+
 def summary_prompt(cfg: Config) -> str:
-    return (cfg.ai.get("summary_prompt") or DEFAULT_SUMMARY_PROMPT).replace("{me}", _labels(cfg)["me"])
+    return (cfg.ai.get("summary_prompt") or DEFAULT_SUMMARY_PROMPT).replace(
+        "{me}", _labels(cfg)["me"]) + _glossary(cfg)
 
 
 def chat_prompt(cfg: Config) -> str:
-    return (cfg.ai.get("chat_prompt") or DEFAULT_CHAT_PROMPT).replace("{me}", _labels(cfg)["me"])
+    return (cfg.ai.get("chat_prompt") or DEFAULT_CHAT_PROMPT).replace(
+        "{me}", _labels(cfg)["me"]) + _glossary(cfg)
 
 
 def _strip_timestamps(transcript: str) -> str:

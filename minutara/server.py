@@ -369,7 +369,7 @@ def local_ip() -> str:
 EDITABLE_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "whisper_model", "whisper_device",
-    "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
+    "me_label", "them_label", "vocabulary", "remove_echo", "mic_device", "speaker_device", "auto_transcribe",
     "live_transcribe",
     "meeting_detect", "meeting_apps", "meeting_titles", "meeting_browsers", "floating_recorder",
     "auto_export", "export_format", "backup_audio",
@@ -768,6 +768,8 @@ def create_app(cfg: Config) -> tuple[Flask, Recorder]:
             "whisper_device": cfg.whisper_device,
             "me_label": cfg.me_label,
             "them_label": cfg.them_label,
+            "vocabulary": cfg.vocabulary,
+            "remove_echo": cfg.remove_echo,
             "mic_device": cfg.mic_device,
             "speaker_device": cfg.speaker_device,
             "meeting_detect": cfg.meeting_detect,

@@ -326,6 +326,14 @@
             <div class="stext"><b>Transcribe while recording</b><small id="live-hint">The transcript is ready seconds after you stop, instead of minutes.</small></div>
             <label class="switch"><input type="checkbox" data-key="live_transcribe" aria-label="Transcribe while recording"><span></span></label>
           </div>
+          <div class="srow col">
+            <div class="stext"><b>Names and terms</b><small>People, companies, products and jargon from your meetings, separated by commas or lines. Transcription listens for these spellings, and AI notes use them to fix names the transcript misheard.</small></div>
+            <textarea class="field area vocab" data-key="vocabulary" rows="3" spellcheck="false" aria-label="Names and terms" placeholder="e.g. Priya, Tomas, Impact Report, S&amp;P 500, Magnificent 7"></textarea>
+          </div>
+          <div class="srow">
+            <div class="stext"><b>Remove echo from your side</b><small>If you use speakers, your microphone also hears the call. Lines on your side that just repeat what they said at that moment are dropped. Headphones avoid the echo altogether.</small></div>
+            <label class="switch"><input type="checkbox" data-key="remove_echo" aria-label="Remove echo"><span></span></label>
+          </div>
           <div class="srow" data-stt-local>
             <div class="stext"><b>Speech model</b><small>Bigger is more accurate but slower. base.en is a good choice on ARM laptops.</small></div>
             <select class="sel" data-key="whisper_model">

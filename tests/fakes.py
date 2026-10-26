@@ -50,13 +50,21 @@ def make_app_root(prefix="minutara-test-"):
 
 
 # --- faster-whisper ----------------------------------------------------------
+class FakeWord:
+    def __init__(self, start, end, word):
+        self.start, self.end, self.word = start, end, word
+
+
 class FakeSegment:
-    def __init__(self, start, end, text):
+    """A Whisper segment. words: [(start, end, " word"), ...] or None."""
+    def __init__(self, start, end, text, words=None):
         self.start, self.end, self.text = start, end, text
+        self.words = [FakeWord(*w) for w in words] if words else None
 
 
 class FakeWhisperModel:
     calls = []
+    kwargs = []   # the options each transcribe() call got
     fail = False
     delay = 0.0
     scripts = None  # optional list of segment lists, consumed per call
@@ -70,6 +78,7 @@ class FakeWhisperModel:
         if FakeWhisperModel.fail:
             raise RuntimeError("model exploded")
         FakeWhisperModel.calls.append(audio)
+        FakeWhisperModel.kwargs.append(k)
         if FakeWhisperModel.scripts:
             return [FakeSegment(*s) for s in FakeWhisperModel.scripts.pop(0)], None
         return [FakeSegment(0.0, 1.0, "hello world")], None
