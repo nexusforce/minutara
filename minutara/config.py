@@ -144,6 +144,8 @@ class Config:
     whisper_device: str = "cpu"        # "cuda" if you have an NVIDIA GPU
     me_label: str = "Me"
     them_label: str = "Them"
+    vocabulary: str = ""               # names and terms to listen for (comma or line separated)
+    remove_echo: bool = True           # drop your-side lines that are just the call coming through your mic
 
     # --- Capture ---
     mic_device: str = ""               # substring of a mic name; "" = system default
@@ -211,7 +213,7 @@ class Config:
 FLAT_KEYS = (
     "use_pocket_api", "push_to_pocket", "prefer_pocket_transcripts",
     "pocket_api_key", "pocket_base_url", "whisper_model", "whisper_device",
-    "me_label", "them_label", "mic_device", "speaker_device", "auto_transcribe",
+    "me_label", "them_label", "vocabulary", "remove_echo", "mic_device", "speaker_device", "auto_transcribe",
     "live_transcribe", "meeting_detect", "meeting_apps", "meeting_titles", "meeting_browsers", "floating_recorder", "widget_pos",
     "auto_export", "export_format", "backup_dir", "backup_audio",
     "usb_volume_label", "usb_record_dir",

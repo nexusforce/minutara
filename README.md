@@ -226,6 +226,25 @@ a note always re-runs the whole recording in one pass.
 
 ![Settings: transcription](docs/screenshots/settings-transcription.png)
 
+**Names and terms** (Settings → Transcription). List the people, companies,
+products and jargon from your meetings ("Priya, Impact Report, S&P 500").
+Whisper is hinted with them throughout every recording (as *hotwords*, which,
+unlike a starting prompt, apply to every 30-second stretch), the transcription
+services get them as their prompt, and AI notes and Ask get them as correct
+spellings, so a name the transcript misheard still comes out right in the
+notes. The list stays in your own settings.
+
+Transcripts are also built word by word: each side is split into lines at its
+natural pauses and the two sides are interleaved by time, so a quick "yes" from
+you lands in the middle of their long answer where it was said rather than
+after it. Whisper no longer conditions on its own previous output, which is
+what made long transcripts drift into missing capitals and punctuation.
+
+**Echo from speakers.** Without headphones your microphone also hears the call.
+With **Remove echo from your side** on (the default), lines on your side that
+repeat what they said at the same moment are dropped. Headphones avoid the
+echo in the first place.
+
 **Transcription services** (Settings → Transcription → Transcribe with). The
 built-in model is the default and nothing leaves your PC. Optionally:
 

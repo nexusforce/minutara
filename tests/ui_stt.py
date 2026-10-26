@@ -72,6 +72,15 @@ with sync_playwright() as p:
     pg.locator("#stt-provider").scroll_into_view_if_needed()
     pg.screenshot(path=str(OUT / "stt-local.png"))
 
+    # Names and terms, echo removal
+    expect("echo removal on by default", pg.is_checked('[data-key="remove_echo"]'))
+    pg.fill('[data-key="vocabulary"]', "Priya, Tomas\nImpact Report")
+    pg.locator('[data-key="vocabulary"]').blur()
+    pg.wait_for_timeout(500)
+    expect("names and terms saved", cfg.vocabulary == "Priya, Tomas\nImpact Report", repr(cfg.vocabulary))
+    pg.locator('[data-key="vocabulary"]').scroll_into_view_if_needed()
+    pg.screenshot(path=str(OUT / "stt-vocab.png"))
+
     # Live switch
     pg.check('[data-key="live_transcribe"]')
     pg.wait_for_timeout(400)
